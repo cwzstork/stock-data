@@ -12,6 +12,8 @@
  * FinMind 留給「個股歷史回補」與「財報」這種必須逐檔抓的場景。
  */
 
+import { fetchWithRetry } from './http';
+
 const BASE_URL = 'https://api.finmindtrade.com/api/v4/data';
 
 export class FinMindError extends Error {
@@ -46,7 +48,11 @@ async function request<T>(dataset: string, params: Params): Promise<T[]> {
   if (token) url.searchParams.set('token', token);
 
   for (let attempt = 0; attempt <= MAX_RETRY; attempt += 1) {
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    const res = await fetchWithRetry(
+      url,
+      { headers: { accept: 'application/json' } },
+      { label: `finmind ${dataset}` },
+    );
 
     // 402 / 429 是額度用完，等一下再試；其餘 4xx 重試也沒用
     if (res.status === 402 || res.status === 429) {

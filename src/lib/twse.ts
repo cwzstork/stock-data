@@ -13,6 +13,8 @@
  * 中途轉成 JS number 會讓大額成交金額與價格精度流失。
  */
 
+import { fetchWithRetry } from './http';
+
 export type Market = 'twse' | 'tpex' | 'emerging';
 
 export interface DailyQuote {
@@ -66,7 +68,7 @@ function num(raw: unknown): string | null {
 }
 
 async function getJson<T>(label: string, url: string): Promise<T[]> {
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
+  const res = await fetchWithRetry(url, { headers: { accept: 'application/json' } }, { label });
   if (!res.ok) throw new Error(`${label} 取得失敗: HTTP ${res.status}`);
   const body: unknown = await res.json();
   if (!Array.isArray(body)) throw new Error(`${label} 回傳格式非陣列`);
