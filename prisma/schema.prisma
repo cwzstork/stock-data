@@ -1,0 +1,82 @@
+// 台股篩選器 — Phase 1 schema
+//
+// 設計原則：時間是「鍵」不是「欄位名」。
+// 不要出現 close_20180124 這種欄位；日期存在 trade_date，查詢時當參數傳。
+// 滾動彙總（N 年平均／最低）一律查詢時用視窗函數現算，不落地。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 起，連線字串不再寫在這裡：
+//   migrate / introspect 的連線 → prisma.config.ts 的 datasource.url（走 DIRECT_URL）
+//   執行期的連線             → src/lib/prisma.ts 的 driver adapter（走 DATABASE_URL，pooled）
+datasource db {
+  provider = "postgresql"
+}
+
+/// 股票主檔
+model Stock {
+  stockId   String   @id @map("stock_id") @db.VarChar(10)
+  name      String   @map("stock_name") @db.VarChar(60)
+  /// twse=上市 / tpex=上櫃 / emerging=興櫃
+  market    String   @db.VarChar(10)
+  industry  String?  @map("industry_category") @db.VarChar(60)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  daily   StockDaily[]
+  capital StockCapital[]
+
+  @@index([market])
+  @@index([industry])
+  @@map("stock")
+}
+
+/// 股本（季頻）
+/// 來源：FinMind TaiwanStockBalanceSheet，type = CapitalStock（origin_name = 股本合計）
+///
+/// 股本隨財報公告才更新，不是日頻資料。原始篩選器上的「20180124 股本(百萬)」
+/// 實際語意是「該日期當時最新的股本」，所以這裡存財報基準日，
+/// 查詢時取 reportDate <= 指定日期的最新一筆。
+model StockCapital {
+  stockId    String   @map("stock_id") @db.VarChar(10)
+  /// 財報基準日（每季季底）
+  reportDate DateTime @map("report_date") @db.Date
+  /// 股本，單位：元（上游原始單位，不在寫入時換算，避免精度流失）
+  capital    BigInt
+
+  stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
+
+  @@id([stockId, reportDate])
+  @@index([reportDate])
+  @@map("stock_capital")
+}
+
+/// 日頻行情與評價指標
+/// 來源：FinMind TaiwanStockPrice（價量）＋ TaiwanStockPER（殖利率／本益比／股價淨值比）
+model StockDaily {
+  stockId   String   @map("stock_id") @db.VarChar(10)
+  tradeDate DateTime @map("trade_date") @db.Date
+
+  /// 收盤價
+  close Decimal? @db.Decimal(12, 4)
+  /// 成交量（股）
+  volume BigInt?
+  /// 成交金額（元）
+  turnover BigInt?
+
+  /// 殖利率(%)，交易所公告
+  dividendYield Decimal? @map("dividend_yield") @db.Decimal(8, 4)
+  /// 本益比（近四季）
+  per Decimal? @db.Decimal(10, 2)
+  /// 股價淨值比
+  pbr Decimal? @db.Decimal(10, 2)
+
+  stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
+
+  @@id([stockId, tradeDate])
+  // 篩選器最常見的查法是「某一天的全市場」，所以日期要能快速定位
+  @@index([tradeDate])
+  @@index([tradeDate, dividendYield])
+  @@map("stock_daily")
+}
