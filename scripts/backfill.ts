@@ -24,7 +24,7 @@ import {
   type PerRow,
   type PriceRow,
 } from '../src/lib/finmind';
-import { readR2Config, uploadDailyParquet } from '../src/lib/parquet';
+import { readParquetDir, writeDailyParquet } from '../src/lib/parquet';
 
 try {
   process.loadEnvFile('.env');
@@ -241,8 +241,10 @@ function aggregate(stockId: string, prices: PriceRow[], pers: PerRow[]): AnnualR
   return out;
 }
 
-// 沒設定 R2 就是 null，整段外存會安靜跳過
-const R2 = readR2Config();
+// 沒設定 PARQUET_DIR 就是 null，整段外存會安靜跳過
+const PARQUET_DIR = readParquetDir();
+let parquetFiles = 0;
+let parquetBytes = 0;
 
 async function runAnnual(stockId: string) {
   const prices = await fetchPriceHistory(stockId, START_DATE);
@@ -256,13 +258,15 @@ async function runAnnual(stockId: string) {
   // 日頻明細順手外存。這裡不用多打任何一次 API——prices 本來就抓進來了，
   // 只是彙總完就丟掉太可惜，而它進資料庫會撞爆免費層容量。
   let parquetNote = '';
-  if (R2 && prices.length) {
+  if (PARQUET_DIR && prices.length) {
     try {
-      const up = await uploadDailyParquet(R2, stockId, prices);
-      parquetNote = `  parquet ${up.rows} 列`;
+      const w = await writeDailyParquet(PARQUET_DIR, stockId, prices);
+      parquetFiles += 1;
+      parquetBytes += w.bytes;
+      parquetNote = `  parquet ${w.rows} 列 / ${(w.bytes / 1024).toFixed(0)}KB`;
     } catch (e) {
       // 外存失敗不該讓年度彙總跟著失敗，那才是主要產出
-      console.warn(`      ! ${stockId} Parquet 外存失敗: ${e instanceof Error ? e.message : e}`);
+      console.warn(`      ! ${stockId} Parquet 產生失敗: ${e instanceof Error ? e.message : e}`);
     }
   }
 
@@ -387,7 +391,9 @@ async function main() {
   const p0 = await progress(ds.key);
   console.log(`整體進度 ${p0.done} / ${p0.total}`);
   if (ds.key === 'annual') {
-    console.log(R2 ? `日頻明細外存 R2：${R2.bucket}/${R2.prefix}/` : '日頻明細外存：未設定 R2，略過');
+    console.log(
+      PARQUET_DIR ? `日頻明細外存：${PARQUET_DIR}` : '日頻明細外存：未設定 PARQUET_DIR，略過',
+    );
   }
   console.log('');
 
@@ -437,6 +443,9 @@ async function main() {
   console.log(
     `\n本次：有資料 ${ok}　無資料 ${empty}　失敗 ${failed}` + (dropped ? `　去除重複列 ${dropped}` : ''),
   );
+  if (parquetFiles) {
+    console.log(`Parquet：${parquetFiles} 檔 / ${(parquetBytes / 1024 / 1024).toFixed(1)} MB`);
+  }
   if (!COMMIT) console.log('（乾跑，沒有寫入也沒有記錄進度）');
 
   const p1 = await progress(ds.key);

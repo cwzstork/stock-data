@@ -1,5 +1,5 @@
 /**
- * 日頻明細外存成 Parquet，放 Cloudflare R2。
+ * 日頻明細外存成 Parquet，放 GitHub Release。
  *
  * 為什麼不進資料庫：
  *   3,081 檔 × 每年約 245 個交易日 × 10 年 ≈ 690 萬列，含索引超過 1 GB，
@@ -8,62 +8,37 @@
  *
  * 為什麼是 Parquet 而不是 JSON／CSV：
  *   實測同一檔十年日頻，JSON 364 KB、Parquet(ZSTD) 28 KB，壓縮 13.2 倍。
- *   3,081 檔約 83 MB，R2 免費層有 10 GB。
- *   而且 Parquet 是列式的，查單一欄位或單一時段不用讀整個檔。
+ *   3,081 檔約 83 MB。而且 Parquet 是列式的，查單一欄位或單一時段
+ *   不用讀整個檔——DuckDB 可以只抓需要的那幾個 row group。
+ *
+ * 為什麼放 GitHub Release：
+ *   不計入 repo 大小（clone 不會變慢）、單檔上限 2 GB、不需要另開帳號
+ *   或綁信用卡。而且 asset 有穩定的公開網址，DuckDB 的 httpfs 可以直接查，
+ *   不必先下載整包。
  *
  * 為什麼一檔一個檔案：
- *   抓取本來就是逐檔進行，一檔一檔寫可以中斷續跑，不必先把全市場
- *   累積在記憶體裡。實際查詢也多半是「看某一檔的十年走勢」。
- *   之後真要做全市場掃描，再用 DuckDB 把它們壓成按年分區的大檔即可。
+ *   抓取本來就逐檔進行，可中斷續跑；檔名就是股號，重跑會覆蓋同名 asset，
+ *   所以永遠不會出現重複資料。實際查詢也多半是「看某一檔的十年走勢」，
+ *   直接指向那一個網址就好，不用掃全市場。
  *
- * 沒有設定 R2 時整支會安靜跳過，不影響其他回補。
+ * 沒有設定 PARQUET_DIR 時整支會安靜跳過，不影響其他回補。
  */
 
 import type { DuckDBConnection } from '@duckdb/node-api';
 
-export interface R2Config {
-  accountId: string;
-  keyId: string;
-  secret: string;
-  bucket: string;
-  /** 物件路徑前綴，預設 daily */
-  prefix: string;
-}
-
-export function readR2Config(): R2Config | null {
-  const accountId = process.env.R2_ACCOUNT_ID;
-  const keyId = process.env.R2_ACCESS_KEY_ID;
-  const secret = process.env.R2_SECRET_ACCESS_KEY;
-  const bucket = process.env.R2_BUCKET;
-  if (!accountId || !keyId || !secret || !bucket) return null;
-  return { accountId, keyId, secret, bucket, prefix: process.env.R2_PREFIX ?? 'daily' };
+/** 產生的檔案要放哪。由 workflow 指定，之後那一步再一次上傳。 */
+export function readParquetDir(): string | null {
+  return process.env.PARQUET_DIR || null;
 }
 
 let conn: DuckDBConnection | null = null;
 
-/**
- * 建立 DuckDB 連線並掛上 R2 認證。
- *
- * DuckDB 的 httpfs 擴充原生支援 r2:// 協定，所以不需要另外裝 AWS SDK，
- * 產生 Parquet 與上傳可以在同一句 COPY 完成。
- */
-async function getConnection(cfg: R2Config): Promise<DuckDBConnection> {
+async function getConnection(): Promise<DuckDBConnection> {
   if (conn) return conn;
   const { DuckDBInstance } = await import('@duckdb/node-api');
   const instance = await DuckDBInstance.create(':memory:');
-  const c = await instance.connect();
-  await c.run('INSTALL httpfs; LOAD httpfs;');
-  // 這裡會帶到金鑰，所以用參數化；DuckDB 的 CREATE SECRET 不吃 prepared statement，
-  // 改用 escape 後內嵌，金鑰本身是 base64/hex 字元集，不含單引號
-  const esc = (v: string) => v.replace(/'/g, "''");
-  await c.run(`CREATE OR REPLACE SECRET r2_secret (
-    TYPE R2,
-    KEY_ID '${esc(cfg.keyId)}',
-    SECRET '${esc(cfg.secret)}',
-    ACCOUNT_ID '${esc(cfg.accountId)}'
-  )`);
-  conn = c;
-  return c;
+  conn = await instance.connect();
+  return conn;
 }
 
 export interface DailyBar {
@@ -78,23 +53,27 @@ export interface DailyBar {
 }
 
 /**
- * 把一檔的日頻明細寫成 Parquet 上傳 R2。
+ * 把一檔的日頻明細寫成 Parquet。
  *
  * 走 read_json_auto 讀一個暫存的 NDJSON，而不是逐列 INSERT——
  * 兩千多列逐列插入會慢上兩個數量級，而且 DuckDB 對 JSON 的型別推斷
  * 正好能把 date 認成 DATE、量能認成 BIGINT。
  */
-export async function uploadDailyParquet(
-  cfg: R2Config,
+export async function writeDailyParquet(
+  dir: string,
   stockId: string,
   rows: DailyBar[],
-): Promise<{ key: string; rows: number }> {
-  const { writeFileSync, rmSync, mkdtempSync } = await import('node:fs');
+): Promise<{ path: string; rows: number; bytes: number }> {
+  const { writeFileSync, rmSync, mkdtempSync, mkdirSync, statSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { tmpdir } = await import('node:os');
 
-  const dir = mkdtempSync(join(tmpdir(), 'pq-'));
-  const jsonPath = join(dir, 'in.json').replace(/\\/g, '/');
+  mkdirSync(dir, { recursive: true });
+  const tmp = mkdtempSync(join(tmpdir(), 'pq-'));
+  // DuckDB 的路徑一律用正斜線，Windows 的反斜線會被當成跳脫字元
+  const jsonPath = join(tmp, 'in.json').replace(/\\/g, '/');
+  const outPath = join(dir, `${stockId}.parquet`).replace(/\\/g, '/');
+
   try {
     writeFileSync(
       jsonPath,
@@ -114,14 +93,13 @@ export async function uploadDailyParquet(
         .join('\n'),
     );
 
-    const c = await getConnection(cfg);
-    const key = `${cfg.prefix}/${stockId}.parquet`;
+    const c = await getConnection();
     await c.run(
       `COPY (SELECT * FROM read_json_auto('${jsonPath}') ORDER BY date)
-         TO 'r2://${cfg.bucket}/${key}' (FORMAT PARQUET, COMPRESSION ZSTD)`,
+         TO '${outPath}' (FORMAT PARQUET, COMPRESSION ZSTD)`,
     );
-    return { key, rows: rows.length };
+    return { path: outPath, rows: rows.length, bytes: statSync(outPath).size };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true });
   }
 }

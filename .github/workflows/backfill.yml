@@ -20,6 +20,9 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
+    # 上傳 Release asset 需要寫入權限
+    permissions:
+      contents: write
     # 550 檔 × 6 秒 ≈ 55 分鐘，留餘裕
     timeout-minutes: 80
 
@@ -38,16 +41,33 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-          # 以下四個沒設就跳過 Parquet 外存，其餘回補照跑
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # 年度彙總順便把日頻明細寫成 Parquet 到這個資料夾，下一步再上傳
+          PARQUET_DIR: ${{ github.workspace }}/parquet
         shell: bash
         run: |
           set -o pipefail
           # 2>&1 不能少：錯誤走 stderr，只導 stdout 的話失敗時看不到原因
           npm run backfill -- --commit --limit=${{ inputs.limit || '550' }} 2>&1 | tee backfill.log
+
+      # 檔名就是股號，--clobber 會覆蓋同名 asset，
+      # 所以之後重跑不會累積重複資料，也不用先清掉舊檔。
+      - name: 上傳日頻 Parquet 到 Release
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(parquet/*.parquet)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "這一輪沒有產生 Parquet（可能還在補配息）"
+            exit 0
+          fi
+          echo "準備上傳 ${#files[@]} 個檔案"
+          # 第一次要先把 release 建起來；已存在就忽略錯誤
+          gh release view daily-parquet >/dev/null 2>&1 ||             gh release create daily-parquet               --title '台股日頻明細（Parquet）'               --notes '每檔一個 Parquet，檔名是股號。DuckDB 可直接以網址查詢，不必下載整包。'
+          gh release upload daily-parquet "${files[@]}" --clobber
+          du -sh parquet
 
       - name: 把結果貼到執行摘要
         if: always()

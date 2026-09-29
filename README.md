@@ -101,6 +101,10 @@ npm run sync -- --commit   # 實際寫入
 | `stock_daily` | 日頻行情與評價（收盤、量額、殖利率、本益比、股價淨值比） | `stock_id, trade_date` |
 | `stock_capital` | 股本。只在數值變動時才寫新列，否則每日同步會讓它跟日頻一樣大 | `stock_id, report_date` |
 | `stock_quarterly` | 季頻財報（損益表＋資產負債表） | `stock_id, period_end` |
+| `stock_dividend` | 逐筆除息紀錄（含 ETF） | `stock_id, ex_date` |
+| `stock_annual` | 年度彙總（年均價、年高低、年均/最低 PER） | `stock_id, year` |
+| `saved_filter` | 存起來的篩選條件 | `id` |
+| `backfill_log` | 逐檔回補進度 | `stock_id, dataset` |
 
 `stock_capital.report_date` 是資料出表日，不是交易日，而且往往比交易日還晚。
 所以查詢時是「優先取交易日當天或之前最接近的一筆，真的沒有才取之後最接近的」——
@@ -132,3 +136,51 @@ ROE／負債比／EPS／每股淨值則是所有行業都有。
 寧可留白，也不要在畫面上放一個看起來像數字的錯誤值。
 
 資產負債恆等式（資產總計 = 負債總計 + 權益總計）1,976 筆全數相符，可作為回歸檢查。
+
+## 日頻明細（Parquet on GitHub Release）
+
+十年日頻明細進資料庫要超過 1 GB，撞爆 Neon 免費層 0.5 GB。
+但篩選器要的指標只需要年度層級（已經在 `stock_annual`），
+日頻明細只有畫走勢圖或回測才會用到，所以外存成 Parquet。
+
+實測一檔十二年（2,860 筆）：JSON 364 KB → Parquet(ZSTD) 約 40–60 KB。
+全市場 3,081 檔約 **150 MB**，放 GitHub Release 不計入 repo 大小。
+
+檔案由 `annual` 回補順手產生——**不額外打任何一次 API**，
+日頻資料本來就為了算年度彙總抓進來了。
+檔名就是股號，上傳用 `--clobber`，重跑會覆蓋同名 asset，不會累積重複。
+
+### 怎麼查
+
+不用下載整包，DuckDB 可以直接查單一網址：
+
+```sql
+INSTALL httpfs; LOAD httpfs;
+
+SELECT date, close, volume
+  FROM 'https://github.com/cwzstork/stock-data/releases/download/daily-parquet/2330.parquet'
+ WHERE date >= '2020-01-01'
+ ORDER BY date;
+```
+
+下載到本機後可以用萬用字元一次掃多檔：
+
+```bash
+gh release download daily-parquet -D parquet -p '*.parquet'
+```
+
+```sql
+SELECT stock_id, count(*), round(avg(close), 2)
+  FROM 'parquet/*.parquet'
+ GROUP BY 1;
+```
+
+欄位：`date DATE, stock_id VARCHAR, open/high/low/close DOUBLE, volume/turnover BIGINT`。
+
+本機要產生檔案的話設 `PARQUET_DIR`：
+
+```bash
+PARQUET_DIR=./parquet npm run backfill -- --commit --dataset=annual
+```
+
+沒設就安靜跳過，其他回補照跑。
