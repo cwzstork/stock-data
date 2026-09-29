@@ -60,9 +60,9 @@
     :root:not([data-theme="light"]) .tag.m{color:#fcd34d}
     :root:not([data-theme="light"]) .tag.now{color:#fca5a5}
   }
-  .grid{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); margin:14px 0}
+  .grid{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); margin:14px 0}
   .card{border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:var(--soft)}
-  .card b{display:block; font-size:1.35rem; font-variant-numeric:tabular-nums; margin-bottom:2px}
+  .card b{display:block; font-size:1.3rem; font-variant-numeric:tabular-nums; margin-bottom:2px}
   .card span{font-size:12px; color:var(--muted)}
   ul{margin:8px 0; padding-left:22px} li{margin:4px 0}
   .meta{font-size:12px; color:var(--muted); margin-top:40px; padding-top:14px; border-top:1px solid var(--line)}
@@ -73,7 +73,9 @@
   .todo > div:last-child{border-bottom:0}
   .todo h4{margin:0 0 4px; font-size:.95rem}
   .todo small{color:var(--muted)}
-  @media print{ body{font-size:11pt} .box{break-inside:avoid} table{break-inside:auto} }
+  .done{opacity:.6}
+  .done h4::before{content:"✔ "; color:#15803d}
+  @media print{ body{font-size:11pt} .box{break-inside:avoid} }
 </style>
 </head>
 <body>
@@ -81,272 +83,270 @@
 
 <h1>台股篩選器 — 欄位說明</h1>
 <p class="lede">
-  每個欄位的時間基準、涵蓋區間與對位規則。<br>
-  資料截至 <strong>2026-09-29</strong>，歷史回補仍在進行中，本文同時標示「目前」與「回補完成後」兩種狀態。
+  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-09-29</strong>。<br>
+  畫面上的欄位名都會標出時間基準——同一個指標在不同基準下差很多，
+  台積電 <strong>ROE(近四季) 34.78%</strong> 與 <strong>ROE(累計年化) 39.77%</strong> 是同一天的兩個數字。
 </p>
 
 <div class="grid">
-  <div class="card"><b>12.5 MB</b><span>資料庫已用 / 512 MB 上限</span>
-    <div class="bar"><i style="width:2.4%"></i></div></div>
-  <div class="card"><b>3,081</b><span>股票主檔（含上市／上櫃／興櫃／ETF）</span></div>
-  <div class="card"><b>560 / 3,081</b><span>配息回補進度</span>
-    <div class="bar"><i style="width:18%"></i></div></div>
-  <div class="card"><b>4 / 3,081</b><span>年度彙總回補進度</span>
-    <div class="bar"><i style="width:0.1%"></i></div></div>
+  <div class="card"><b>13 MB</b><span>資料庫已用 / 512 MB</span>
+    <div class="bar"><i style="width:2.5%"></i></div></div>
+  <div class="card"><b>3,081</b><span>股票主檔</span></div>
+  <div class="card"><b>47</b><span>篩選器欄位數</span></div>
+  <div class="card"><b>560 / 4 / 6</b><span>回補進度：配息 / 年度 / 季報（共 3,081）</span></div>
 </div>
 
-<h2>一、時間基準的四種類型</h2>
-<p>欄位分四種時間基準，看懂這個就知道每個數字在講哪一段期間。</p>
+<h2>一、時間基準：六種</h2>
 <div class="scroll"><table>
-<tr><th>標記</th><th>意思</th><th>舉例</th><th>實際期間（以基準日 2026-09-24 為例）</th></tr>
-<tr><td><span class="tag d">日</span></td><td>基準日<strong>當天</strong>的快照</td><td>收盤價、成交量、本益比</td><td>2026-09-24 那一天</td></tr>
-<tr><td><span class="tag q">季·累計</span></td><td>該會計年度<strong>年初到該季底</strong>的累計數</td><td>毛利率、ROE、EPS</td><td><strong>2026-01-01 ~ 2026-06-30</strong>（上半年）</td></tr>
-<tr><td><span class="tag y">年</span></td><td>以<strong>完整年度</strong>為單位往回數</td><td>5年歷史殖、5年最低PER</td><td><strong>2021-01-01 ~ 2025-12-31</strong>（不含當年）</td></tr>
-<tr><td><span class="tag m">滾動12月</span></td><td>基準日往回<strong>整整一年</strong></td><td>年化殖利率、近12月股利</td><td><strong>2025-09-25 ~ 2026-09-24</strong></td></tr>
-<tr><td><span class="tag now">當期</span></td><td>只有<strong>最新一筆</strong>，沒有歷史</td><td>股本、董監持股</td><td>2026-09-28 / 2026-08-31</td></tr>
+<tr><th>標記</th><th>意思</th><th>實際期間（基準日 2026-09-24、財報期 2026-06-30）</th></tr>
+<tr><td><span class="tag d">當日</span></td><td>基準日那一天</td><td>2026-09-24</td></tr>
+<tr><td><span class="tag q">單季</span></td><td>最新那一季，三個月</td><td><strong>2026-04-01 ~ 2026-06-30</strong></td></tr>
+<tr><td><span class="tag q">累計</span></td><td>該年度年初到最新一季</td><td><strong>2026-01-01 ~ 2026-06-30</strong></td></tr>
+<tr><td><span class="tag q">近四季</span></td><td>最近四季加總，滾動一年</td><td><strong>2025-07-01 ~ 2026-06-30</strong></td></tr>
+<tr><td><span class="tag now">當期</span></td><td>財報期末或公告當期的時點數，不能加總</td><td>2026-06-30 / 2026-08-31 / 2026-09-28</td></tr>
+<tr><td><span class="tag m">近12月</span></td><td>基準日往回整整一年</td><td><strong>2025-09-25 ~ 2026-09-24</strong></td></tr>
+<tr><td><span class="tag y">N年</span></td><td>完整年度往回數，<strong>不含當年</strong></td><td>5年 <strong>2021-01-01 ~ 2025-12-31</strong>　10年 <strong>2016-01-01 ~ 2025-12-31</strong></td></tr>
 </table></div>
-
-<div class="box">
-<p><strong>「季·累計」最容易誤解。</strong>台積電目前毛利率 67.03%，分子分母都是 <strong>2026 年 1 月到 6 月</strong>的累計，
-不是第二季單季（4–6 月），也不是近四季（TTM）。</p>
-<p>要單季要拿相鄰兩季累計相減；要近四季要五期資料。兩者都得等十年季報回補完成。</p>
-</div>
-
-<h2>二、欄位總表</h2>
-
-<h3>識別</h3>
-<div class="scroll"><table>
-<tr><th>欄位</th><th>基準</th><th>涵蓋區間</th><th>說明</th></tr>
-<tr><td>股號 / 股名 / 市場 / 產業</td><td><span class="tag now">當期</span></td><td>—</td><td>每日同步更新。市場分上市／上櫃／興櫃</td></tr>
-</table></div>
-
-<h3>日頻行情 <span class="tag d">日</span></h3>
-<p>全部來自基準日<strong>當天</strong>。資料來源是證交所／櫃買中心官方 open API（每日同步），以及 FinMind 逐檔歷史（回補）。</p>
-<div class="scroll"><table>
-<tr><th>欄位</th><th>單位</th><th>目前涵蓋</th><th>回補完成後</th><th>說明</th></tr>
-<tr><td>收盤</td><td>元</td><td rowspan="6">2016-10-31 ~ 2026-09-29<br><small>（僅 3 檔已回補）</small><br>＋ 2026-09-24 全市場</td>
-    <td rowspan="6"><strong>2016-10-31 ~ 今天</strong><br>每月最後交易日 120 期<br>＋ 最近 61 個交易日</td><td>當日收盤價</td></tr>
-<tr><td>成交量</td><td>張</td><td>資料庫存「股」，畫面除以 1000</td></tr>
-<tr><td>成交額</td><td>千元</td><td>資料庫存「元」</td></tr>
-<tr><td>殖利率</td><td>%</td><td>交易所公告值＝近 12 個月已除息現金股利 ÷ 收盤價。<strong>不含 ETF</strong>，且除息後有更新延遲</td></tr>
-<tr><td>本益比</td><td>倍</td><td>交易所公告的近四季本益比。虧損公司為空</td></tr>
-<tr><td>股價淨值比</td><td>倍</td><td>交易所公告值</td></tr>
-</table></div>
-
-<div class="box">
-<p><strong>為什麼是「每月最後交易日＋最近 61 天」而不是每一天？</strong></p>
-<p>十年逐日全放進資料庫要 690 萬列、超過 1 GB，撞爆免費層 0.5 GB。
-只留月底的話十年才 120 期、約 173 MB，用一半容量換到二十倍時間跨度。
-完整逐日仍在 Parquet 裡（見第五節）。</p>
-</div>
-
-<h3>季頻財報 <span class="tag q">季·累計</span></h3>
-<p>來自證交所／櫃買的綜合損益表與資產負債表。對位規則是<strong>嚴格 <code>財報期別 ≤ 基準日</code></strong>——
-用基準日之後才公告的財報去篩，等於看未來資料。</p>
-<div class="scroll"><table>
-<tr><th>欄位</th><th>算式</th><th>目前涵蓋</th><th>回補完成後</th></tr>
-<tr><td>毛利率 %</td><td>營業毛利 ÷ 營業收入</td>
-    <td rowspan="9"><strong>2026-01-01 ~ 2026-06-30</strong><br><small>僅 2026 上半年累計一期</small></td>
-    <td rowspan="9"><strong>2016Q1 ~ 2026Q2</strong><br>共 42 期<br><small>每期都是該年年初到該季底</small></td></tr>
-<tr><td>營業利益率 %</td><td>營業利益 ÷ 營業收入</td></tr>
-<tr><td>淨利率 %</td><td>稅後淨利（歸屬母公司）÷ 營業收入</td></tr>
-<tr><td>ROE %</td><td>稅後淨利（母公司）÷ 母公司權益 × <strong>4 ÷ 季別</strong>（年化）</td></tr>
-<tr><td>ROA %</td><td>稅後淨利（母公司）÷ 資產總計 × <strong>4 ÷ 季別</strong>（年化）</td></tr>
-<tr><td>負債比 %</td><td>負債總計 ÷ 資產總計</td></tr>
-<tr><td>流動比 %</td><td>流動資產 ÷ 流動負債</td></tr>
-<tr><td>EPS</td><td>基本每股盈餘（<strong>累計</strong>，不是單季也不是近四季）</td></tr>
-<tr><td>每股淨值</td><td>期末每股參考淨值</td></tr>
-<tr><td>財報期別</td><td colspan="3">這一列用的是哪一期財報，空白代表該檔沒有財報（ETF、興櫃）</td></tr>
-</table></div>
-
-<div class="box bad">
-<p><strong>不是每個行業都有這些數字。</strong>證交所把財報依行業拆成六檔，其中兩類的上游資料本身有問題（2026-09-29 逐一驗算）：</p>
-<ul>
-<li><strong>金控業</strong>：「淨收益」對不上利息淨收益＋利息以外淨收益，且 13 家全部「稅前淨利 &lt; 稅後淨利」——會計上不可能。欄位與值錯位，只採用淨利與 EPS。</li>
-<li><strong>保險業</strong>：旺旺保營業利益 1,931,456 &gt; 營業收入 930,279；中再保營益是營收 6 倍。營收與營業利益不可信，不採用。</li>
-<li><strong>銀行業</strong>：欄位可信（推算稅前與公告值完全吻合），但銀行沒有單一「營業收入」概念，三個利潤率留空。</li>
-</ul>
-<p>所以<strong>毛利率只有一般業算得出來</strong>，營益率多了證券期貨業，淨利率再多異業。
-ROE／ROA／負債比／EPS／每股淨值則是所有行業都有。流動比對金融業不適用（它們的資產負債表沒有流動／非流動之分）。</p>
-</div>
-
-<h3>配息 <span class="tag m">滾動12月</span> <span class="tag y">年</span></h3>
-<p>來自 FinMind 逐筆除息紀錄，<strong>涵蓋 ETF</strong>——交易所的公告殖利率完全不含 ETF。</p>
-<div class="scroll"><table>
-<tr><th>欄位</th><th>基準</th><th>期間（以基準日 2026-09-24 為例）</th><th>說明</th></tr>
-<tr><td>年化殖利率 %</td><td><span class="tag m">滾動12月</span></td><td><strong>2025-09-25 ~ 2026-09-24</strong></td><td>該期間已除息現金股利合計 ÷ 基準日收盤價</td></tr>
-<tr><td>近12月股利</td><td><span class="tag m">滾動12月</span></td><td>同上</td><td>上面那個的分子</td></tr>
-<tr><td>5年均殖 %</td><td><span class="tag y">年</span></td><td><strong>2021-01-01 ~ 2025-12-31</strong></td><td>近 5 個完整年度平均股利 ÷ <strong>基準日</strong>收盤價<br>問的是「用今天的價格買，領過去平均股利有多少報酬」</td></tr>
-<tr><td>10年均殖 %</td><td><span class="tag y">年</span></td><td><strong>2016-01-01 ~ 2025-12-31</strong></td><td>同上，10 年</td></tr>
-<tr><td>5年均股利</td><td><span class="tag y">年</span></td><td>2021-01-01 ~ 2025-12-31</td><td>近 5 個完整年度的平均現金股利（元）</td></tr>
-<tr><td>連續配息（年）</td><td><span class="tag y">年</span></td><td>從 2025 往回數</td><td>一年沒配就停。<strong>目前上限 11 年</strong>，因為配息資料起點是 2015-06-16</td></tr>
-</table></div>
-<p>目前配息資料涵蓋 <strong>2015-06-16 ~ 2026-09-24</strong>，共 5,285 筆除息紀錄、936 個相異除息日，回補進度 560 / 3,081 檔。</p>
 
 <div class="box ok">
-<p><strong>為什麼自己算而不是用交易所的殖利率？</strong>驗證過 7 檔，6 檔與交易所完全吻合
-（台泥 3.17、台達電 0.61、中華電 3.59、聯發科 1.01、富邦金 2.83、玉山金 3.07）。</p>
-<p>差異出在兩個地方，而且都是自己算比較準：</p>
+<p><strong>資料庫存「單季」，累計與近四季查詢時現算。</strong></p>
+<p>證交所給累計、FinMind 給單季，兩者實測可精確互換——台積電 2026
+Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
+與證交所公告的上半年累計一字不差，EPS 22.08 ＋ 27.25 ＝ 49.33 也相同。</p>
+<p>選單季當標準形式，是因為它能往上推導但反過來不行：累計＝同年度各季加總、
+近四季＝最近四季加總；而單季要從累計相減，缺任何一期就算不出來。</p>
+</div>
+
+<h2>二、欄位總表（47 欄）</h2>
+
+<h3>識別（4 欄）</h3>
+<div class="scroll"><table>
+<tr><th>欄位</th><th>基準</th><th>說明</th></tr>
+<tr><td>股號 / 股名 / 市場 / 產業</td><td><span class="tag now">當期</span></td><td>每日同步更新。市場分上市／上櫃／興櫃</td></tr>
+</table></div>
+
+<h3>日頻行情（7 欄）</h3>
+<div class="scroll"><table>
+<tr><th>欄位</th><th>涵蓋區間</th><th>說明</th></tr>
+<tr><td>收盤(當日)</td><td rowspan="6"><strong>2016-10-31 ~ 2026-09-29</strong><br>每月最後交易日 120 期<br>＋ 最近 61 個交易日<br><small>目前 178 個相異日期。回補完成後全市場都有</small></td><td>當日收盤價</td></tr>
+<tr><td>成交量(當日,張)</td><td>資料庫存「股」，畫面除以 1000</td></tr>
+<tr><td>成交額(當日,千元)</td><td>資料庫存「元」</td></tr>
+<tr><td>殖利率(當日,交易所)%</td><td>交易所公告值。<strong>不含 ETF</strong>，除息後有更新延遲</td></tr>
+<tr><td>本益比(當日,近四季)</td><td>交易所公告的近四季本益比。虧損公司為空</td></tr>
+<tr><td>股價淨值比(當日)</td><td>交易所公告值</td></tr>
+<tr><td>股本(當期,百萬)</td><td>2026-09-28（公司基本資料）</td><td>實收資本額。歷史股本已在季報裡，見下一節</td></tr>
+</table></div>
+
+<div class="box">
+<p><strong>基準日下拉只列「有上市資料且有本益比」的日子。</strong>
+歷史回補是先寫收盤價、評價資料由另一支 API 提供，
+收盤當天評價通常還沒發布。不過濾的話最新那天會變成
+「有收盤沒殖利率沒本益比」，又被當成預設基準日，那三欄會整排空白。</p>
+</div>
+
+<h3>季頻財報（18 欄）</h3>
+<p>對位規則是<strong>嚴格 <code>財報期別 ≤ 基準日</code></strong>——用基準日之後才公告的財報去篩，等於看未來資料。</p>
+<div class="scroll"><table>
+<tr><th>欄位</th><th>基準</th><th>算式 / 說明</th></tr>
+<tr><td>毛利率(單季)%</td><td><span class="tag q">單季</span></td><td>該季營業毛利 ÷ 該季營業收入。看得出短期轉折</td></tr>
+<tr><td>毛利率(累計)%</td><td><span class="tag q">累計</span></td><td>同年度各季加總後相除。與證交所公告同口徑</td></tr>
+<tr><td>營業利益率(單季 / 累計)%</td><td><span class="tag q">單季</span><span class="tag q">累計</span></td><td>營業利益 ÷ 營業收入</td></tr>
+<tr><td>稅後淨利率(單季 / 累計)%</td><td><span class="tag q">單季</span><span class="tag q">累計</span></td><td>稅後淨利（歸屬母公司）÷ 營業收入</td></tr>
+<tr><td>營收成長率(單季年增)%</td><td><span class="tag q">單季</span></td><td>(本季 − 去年同季) ÷ 去年同季。去年同期為零或負時留空</td></tr>
+<tr><td>營業利益成長率(單季年增)%</td><td><span class="tag q">單季</span></td><td>同上</td></tr>
+<tr><td>稅後淨利成長率(單季年增)%</td><td><span class="tag q">單季</span></td><td>同上</td></tr>
+<tr><td><strong>ROE(近四季)%</strong></td><td><span class="tag q">近四季</span></td><td>近四季淨利加總 ÷ 期末母公司權益。<strong>比年化準</strong></td></tr>
+<tr><td>ROE(累計年化)%</td><td><span class="tag q">累計</span></td><td>累計淨利 ÷ 母公司權益 × 4÷季別。旺淡季不均的公司會失真</td></tr>
+<tr><td>ROA(近四季 / 累計年化)%</td><td><span class="tag q">近四季</span><span class="tag q">累計</span></td><td>同上，分母換成資產總計</td></tr>
+<tr><td>負債比(當期)%</td><td><span class="tag now">當期</span></td><td>負債總計 ÷ 資產總計。時點數，不能加總</td></tr>
+<tr><td>流動比(當期)%</td><td><span class="tag now">當期</span></td><td>流動資產 ÷ 流動負債。金融業沒有流動／非流動之分，會留空</td></tr>
+<tr><td>EPS(單季)</td><td><span class="tag q">單季</span></td><td>該季基本每股盈餘</td></tr>
+<tr><td><strong>EPS(近四季)</strong></td><td><span class="tag q">近四季</span></td><td>四季加總。台積電 22.08+19.51+17.44+27.25 = 86.28</td></tr>
+<tr><td>每股淨值(當期)</td><td><span class="tag now">當期</span></td><td>母公司權益 ÷ 股數。與證交所公告同口徑（實測統一證 29.99、台積電 248.05 完全相同）</td></tr>
+<tr><td>財報期別</td><td>—</td><td>這一列用的是哪一期。空白代表沒有財報（ETF、興櫃）</td></tr>
+</table></div>
+<p>目前涵蓋 <strong>2015-03-31 ~ 2026-06-30</strong>（46 期），但只有 6 檔完成回補，其餘仍是舊的單期資料。</p>
+
+<div class="box bad">
+<p><strong>不是每個行業都有這些數字。</strong></p>
+<ul>
+<li><strong>金融業完全沒有 EPS</strong>——上游的損益表就沒有這一項，不是漏抓。</li>
+<li><strong>銀行沒有單一「營業收入」</strong>概念，三個利潤率與成長率都會留空。</li>
+<li><strong>毛利率只有一般業有</strong>；金融業的損益表沒有營業毛利這一項。</li>
+<li>金控的「營業收入」是<strong>淨收益</strong>（利息淨收益＋利息以外淨收益），
+  與一般業的營業收入不是同一件事，跨行業比較要有警覺。</li>
+</ul>
+</div>
+
+<h3>配息（6 欄）</h3>
+<div class="scroll"><table>
+<tr><th>欄位</th><th>基準</th><th>期間（基準日 2026-09-24）</th><th>說明</th></tr>
+<tr><td>年化殖利率(近12月)%</td><td><span class="tag m">近12月</span></td><td><strong>2025-09-25 ~ 2026-09-24</strong></td><td>該期間已除息現金股利 ÷ 基準日收盤價</td></tr>
+<tr><td>現金股利(近12月)</td><td><span class="tag m">近12月</span></td><td>同上</td><td>上面那個的分子</td></tr>
+<tr><td>均殖利率(5年均利÷現價)%</td><td><span class="tag y">5年</span></td><td><strong>2021-01-01 ~ 2025-12-31</strong></td><td>近 5 年平均股利 ÷ <strong>基準日</strong>收盤價<br>「用今天的價格買，領過去的平均股利有多少報酬」</td></tr>
+<tr><td>均殖利率(10年均利÷現價)%</td><td><span class="tag y">10年</span></td><td><strong>2016-01-01 ~ 2025-12-31</strong></td><td>同上</td></tr>
+<tr><td>現金股利(5年均)</td><td><span class="tag y">5年</span></td><td>2021-01-01 ~ 2025-12-31</td><td>近 5 個完整年度的平均現金股利（元）</td></tr>
+<tr><td>連續配息(年)</td><td><span class="tag y">年</span></td><td>從 2025 往回數</td><td>一年沒配就停。<strong>上限 11 年</strong>，配息資料起點是 2015-06-16</td></tr>
+</table></div>
+<p>目前涵蓋 <strong>2015-06-16 ~ 2026-09-24</strong>，5,285 筆除息紀錄，回補 560 / 3,081 檔。</p>
+
+<div class="box ok">
+<p><strong>為什麼自己算而不用交易所的殖利率？</strong>驗過 7 檔，6 檔與交易所完全吻合。差異的兩處都是自己算比較準：</p>
 <ul>
 <li><strong>台積電</strong>：交易所 0.89%、自算 0.97%。差額正是 2026-09-16 剛除息的 7 元，交易所還沒更新股利基數。</li>
 <li><strong>ETF</strong>：交易所<strong>完全沒有</strong>。0050 自算 1.42%、0056 自算 7.21%、00878 自算 7.14%。</li>
 </ul>
 </div>
 
-<h3>年度彙總與便宜價 <span class="tag y">年</span></h3>
-<p>來自 FinMind 逐檔日頻在程式內彙總成年度。「近 N 年」一律只算<strong>完整年度</strong>，不含當年——
-把只過了一半的當年混進平均，下半年配息的公司會被嚴重低估。</p>
+<h3>年度彙總與便宜價（8 欄）</h3>
 <div class="scroll"><table>
 <tr><th>欄位</th><th>期間</th><th>算式</th></tr>
-<tr><td>5年歷史殖 %</td><td><strong>2021-01-01 ~ 2025-12-31</strong></td><td>每年股利 ÷ <strong>當年均價</strong>，再把 5 年平均<br>問的是「過去這幾年買的人平均領到多少」。那一年沒配息算 0%</td></tr>
-<tr><td>10年歷史殖 %</td><td><strong>2016-01-01 ~ 2025-12-31</strong></td><td>同上，10 年</td></tr>
-<tr><td>5年最低殖 %</td><td>2021-01-01 ~ 2025-12-31</td><td>這 5 年裡最低的那一年的歷史殖利率</td></tr>
-<tr><td>5年最低PER</td><td>2021-01-01 ~ 2025-12-31</td><td>這 5 年每日本益比的最低值。非正數視為無意義已濾除</td></tr>
-<tr><td><strong>便宜價（股利）</strong></td><td>2021-01-01 ~ 2025-12-31</td><td>近 5 年平均股利 ÷ 5%（＝ × 20）　<em>存股角度</em></td></tr>
-<tr><td><strong>便宜價（本益比）</strong></td><td>財報期 ＋ 近 5 年</td><td>年化 EPS × 近 5 年最低本益比　<em>獲利角度</em></td></tr>
-<tr><td><strong>便宜價（淨值）</strong></td><td>財報期 ＋ 近 5 年</td><td>每股淨值 × 近 5 年最低股價淨值比　<em>資產角度</em></td></tr>
+<tr><td>歷史殖利率(5年)%</td><td><strong>2021-01-01 ~ 2025-12-31</strong></td><td>每年股利 ÷ <strong>當年均價</strong>再平均<br>「過去這幾年買的人平均領到多少」。那年沒配息算 0%</td></tr>
+<tr><td>歷史殖利率(10年)%</td><td><strong>2016-01-01 ~ 2025-12-31</strong></td><td>同上</td></tr>
+<tr><td>最低殖利率(5年)%</td><td>2021-01-01 ~ 2025-12-31</td><td>這 5 年裡最低的那一年</td></tr>
+<tr><td>最低本益比(5年)</td><td>2021-01-01 ~ 2025-12-31</td><td>這 5 年每日本益比的最低值。非正數視為無意義已濾除</td></tr>
+<tr><td><strong>便宜價(股利法)</strong></td><td>2021-01-01 ~ 2025-12-31</td><td>近 5 年平均股利 ÷ 5%（＝ × 20）　<em>存股角度</em></td></tr>
+<tr><td><strong>便宜價(本益比法)</strong></td><td>近四季 ＋ 近 5 年</td><td><strong>近四季 EPS</strong> × 近 5 年最低本益比　<em>獲利角度</em></td></tr>
+<tr><td><strong>便宜價(淨值法)</strong></td><td>當期 ＋ 近 5 年</td><td>每股淨值 × 近 5 年最低股價淨值比　<em>資產角度</em></td></tr>
 </table></div>
 <p>篩選欄「股價 ÷ 便宜價」取三者中<strong>最寬鬆</strong>的當門檻——三種假設本來就不會同時成立，取最嚴的幾乎篩不到東西。</p>
-<p>年度彙總目前涵蓋 <strong>2015 ~ 2026</strong> 年，但<strong>只有 4 檔已回補</strong>（48 列）。回補完成後為全市場 3,081 檔 × 12 年。</p>
+<p>年度彙總涵蓋 <strong>2015 ~ 2026</strong> 年，目前只有 4 檔完成回補。</p>
 
-<h3>內部人持股 <span class="tag now">當期</span></h3>
-<p>來自證交所／櫃買的董監事持股餘額明細，全市場一次呼叫。<strong>只有最新一期，沒有歷史</strong>。</p>
+<h3>內部人持股（4 欄）</h3>
 <div class="scroll"><table>
 <tr><th>欄位</th><th>期間</th><th>分母</th><th>涵蓋職稱</th></tr>
-<tr><td>董監持股 %</td><td rowspan="4"><strong>2026-08-31</strong><br><small>資料年月 11508</small></td><td>已發行普通股數</td><td>董事長／副董事長／常務董事／董事／獨立董事／監察人</td></tr>
-<tr><td>董監設質 %</td><td><strong>董監自己的持股</strong>，不是總股數</td><td>同上</td></tr>
-<tr><td>經理人持股 %</td><td>已發行普通股數</td><td>總經理／副總經理／經理／協理／副理／財務會計主管</td></tr>
-<tr><td>大股東持股 %</td><td>已發行普通股數</td><td>職稱為「大股東」者</td></tr>
+<tr><td>董監持股(當期)%</td><td rowspan="4"><strong>2026-08-31</strong><br><small>只有最新一期，沒有歷史</small></td><td>已發行普通股數</td><td>董事長／副董事長／常務董事／董事／獨立董事／監察人</td></tr>
+<tr><td>董監設質(當期)%</td><td><strong>董監自己的持股</strong></td><td>同上</td></tr>
+<tr><td>經理人持股(當期)%</td><td>已發行普通股數</td><td>總經理／副總經理／經理／協理／副理／財務會計主管</td></tr>
+<tr><td>大股東持股(當期)%</td><td>已發行普通股數</td><td>職稱為「大股東」者</td></tr>
 </table></div>
-
 <div class="box">
-<p><strong>三者會互相重疊，這是定義使然不是重複計算。</strong>法人大股東常常同時是董事，
-例如中華電的交通部既是董事長也是大股東，兩欄都會算到它。</p>
-<p>另外，上游是「一人一列」，同一人兼多職會重複列示而<strong>每列都記全額持股</strong>。
+<p><strong>三者會互相重疊</strong>，法人大股東常同時是董事——中華電的交通部既是董事長也是大股東，兩欄都算到它。這是定義使然。</p>
+<p>上游是「一人一列」，同一人兼多職會重複列示而每列都記全額持股。
 交通部掛董事長＋七席董事＋大股東共九列，每列都是 2,737,718,976 股，
-直接加總持股比例會變成 <strong>317.64%</strong>。寫入前已依姓名去重，去重後 <strong>35.29%</strong>，
-符合交通部實際持有中華電的比例。</p>
+直接加總會變成 <strong>317.64%</strong>。寫入前已依姓名去重，去重後 <strong>35.29%</strong>。</p>
 </div>
 
-<h2>三、三個現在就要知道的限制</h2>
+<h2>三、現在的限制</h2>
 
 <div class="box bad">
-<p><strong>① 切到歷史日期時，財報欄位會全部空白。</strong></p>
-<p>財報對位是嚴格的 <code>期別 ≤ 基準日</code>，而目前只有 2026-06-30 一期。
-切到 2018-01-31 時，毛利率、營益率、ROE、ROA、負債比、流動比、EPS、每股淨值、
-以及依賴 EPS 的便宜價（本益比）與便宜價（淨值）<strong>全部是空的</strong>。</p>
-<p>解法：十年季報回補（見第四節第 1 項）。</p>
+<p><strong>① 回補未完成前，大多數股票的進階欄位是空的。</strong></p>
+<p>季報 6 / 3,081、年度 4 / 3,081、配息 560 / 3,081。
+在各自補到之前，該檔的單季／累計／成長率／近四季、
+5年10年歷史殖、最低本益比、便宜價都會留白。</p>
 </div>
 
 <div class="box bad">
-<p><strong>② 股本有 look-ahead 問題。</strong></p>
-<p>股本的對位規則是「優先取 ≤ 基準日，沒有才取之後最接近的」——
-因為公司基本資料的出表日常比交易日晚（2026-09-28 出表對應 2026-09-24 行情）。</p>
-<p>但目前只有 2026-09-28 一筆，所以<strong>切到 2018 年會顯示 2026 年的股本</strong>，
-那是當時不可能知道的數字。十年季報回補後會自動解決（資產負債表有歷史股本）。</p>
+<p><strong>② 股本仍有 look-ahead。</strong></p>
+<p>畫面上的「股本(當期)」來自公司基本資料，只有 2026-09-28 一期，
+切到 2018 年會顯示 2026 年的股本。</p>
+<p>季報裡已經有逐季歷史股本（<code>capital_stock</code>），
+但畫面那一欄還沒改接過去——這是待辦第 3 項。</p>
 </div>
 
 <div class="box">
-<p><strong>③ 董監持股永遠只有當期。</strong></p>
-<p>交易所那支 API 只給最新一個月，沒有歷史檔。切到 2018 年那四欄會空白——
-這是<strong>正確</strong>的行為（不會給你未來資料），但也表示歷史回測用不到這幾欄。</p>
+<p><strong>③ 董監持股永遠只有當期。</strong>交易所那支 API 只給最新一個月。
+切到歷史日期那四欄會空白——這是<strong>正確</strong>的（不給未來資料），但歷史回測用不到。</p>
 </div>
 
-<h2>四、還沒實作的任務</h2>
+<div class="box">
+<p><strong>④ 部分金控的每股淨值偏高。</strong>每股淨值的分母用股本合計，與證交所同口徑
+（統一證 29.99、台積電 248.05 完全吻合）。但少數有特別股的金控上游缺股本合計，
+只能退回普通股股本，分母偏小（富邦金 90.50 vs 官方 81.22）。
+這會連帶影響便宜價（淨值法），金控股看那兩欄要有警覺。</p>
+</div>
+
+<h2>四、待辦</h2>
 
 <div class="todo">
-<div>
-  <h4>1. 十年季報回補 <span class="tag q">最高優先</span></h4>
-  <small>FinMind <code>TaiwanStockFinancialStatements</code> ＋ <code>TaiwanStockBalanceSheet</code>，每檔 2 次呼叫，實測一次呼叫拿 42 期（2016Q1~2026Q2）。約 11 小時。</small>
-  <p>解掉 <strong>20 個以上</strong>的欄位，以及上面的限制 ① 和 ②：</p>
-  <ul>
-    <li>單季數字（毛利率、營益率、淨利率、ROE、ROA 的單季值）＝ 相鄰兩季累計相減</li>
-    <li>成長率（營收、營業利益、稅後純益的單季與累計）＝ 對比去年同期</li>
-    <li>年度財報值（2016 毛利率、2016 ROE…）</li>
-    <li>ROE 3 年／5 年／10 年平均</li>
-    <li>歷史股本（解掉 look-ahead）</li>
-    <li>近四季 EPS（讓便宜價的本益比法更準確）</li>
-  </ul>
+<div class="done">
+  <h4>十年季報回補（已排入佇列）</h4>
+  <small>FinMind 每檔 2 次呼叫，實測一次拿 46 期（2015Q1~2026Q2）。進度 6 / 3,081，約 11 小時。</small>
+  <p>已解掉：單季數字、累計、近四季、單季年增率、歷史股本欄位。</p>
 </div>
 <div>
-  <h4>2. 現金流量回補</h4>
+  <h4>1. 現金流量回補</h4>
   <small>FinMind <code>TaiwanStockCashFlowsStatement</code>，每檔 1 次呼叫，實測 42 期。約 5.5 小時。</small>
-  <p>解掉 9 個欄位：營業活動現金流量、投資活動現金流量、自由現金流量（單季／累計／年度）。</p>
+  <p>解掉 9 欄：營業活動現金流量、投資活動現金流量、自由現金流量（單季／累計／年度）。</p>
 </div>
 <div>
-  <h4>3. 完成進行中的回補</h4>
-  <small>配息 560 / 3,081（約 4.5 小時）、年度彙總 4 / 3,081（約 11 小時）。每小時 :30 自動跑一輪。</small>
-  <p>在此之前，5年／10年歷史殖、5年最低PER、便宜價、連續配息年數對大多數股票是空的。</p>
+  <h4>2. 完成進行中的回補</h4>
+  <small>配息 560、年度彙總 4、季報 6，各 3,081 檔。每小時 :30 自動跑一輪，合計約 28 小時。</small>
 </div>
 <div>
-  <h4>4. Parquet 按年分檔（compaction）</h4>
-  <small>目前 Parquet 是「按股票」分檔，查單檔十年只要開 1 個檔，但查「2018-01-24 全市場」要開 3,081 個檔。</small>
-  <p>需要第二套按年分檔的佈局，才能支援全市場的歷史掃描。</p>
+  <h4>3. 股本改接季報的歷史值</h4>
+  <small>資料已經在 <code>stock_quarterly.capital_stock</code>，只差把畫面那一欄改指過去。</small>
+  <p>解掉限制 ②。等季報回補有一定覆蓋率再改比較有意義。</p>
 </div>
 <div>
-  <h4>5. 沒有免費來源，短期不會做</h4>
+  <h4>4. 年度財報值（2016 毛利率、2016 ROE…）</h4>
+  <small>季報回補完成後就能算——把該年四季加總即可，不用再抓資料。</small>
+  <p>同時可做 ROE 3 年／5 年／10 年平均。</p>
+</div>
+<div>
+  <h4>5. Parquet 按年分檔（compaction）</h4>
+  <small>目前 Parquet 按股票分檔，查單檔十年只開 1 個檔，但查「2018-01-24 全市場」要開 3,081 個檔。</small>
+</div>
+<div>
+  <h4>6. 定期修剪 stock_daily</h4>
+  <small>見下一節。容量接近上限時再做，預計一年多以後。</small>
+</div>
+<div>
+  <h4>7. 沒有免費來源，不會做</h4>
   <ul>
     <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API</li>
-    <li><strong>單一大股東的持股比例明細</strong>——只拿得到職稱為「大股東」者的合計</li>
+    <li><strong>單一大股東的持股明細</strong>——只拿得到職稱為「大股東」者的合計</li>
   </ul>
 </div>
 </div>
 
-<h2>五、容量規劃：一年後爆掉怎麼辦</h2>
+<h2>五、容量規劃</h2>
 
-<h3>預估</h3>
 <div class="scroll"><table>
 <tr><th>階段</th><th class="num">容量</th><th>說明</th></tr>
-<tr><td>目前</td><td class="num">12.5 MB</td><td>已用 2.4%</td></tr>
-<tr><td>＋ 歷史日頻（回補中）</td><td class="num">+173 MB</td><td>548,418 列 × 330 bytes（實測）</td></tr>
-<tr><td>＋ 十年季報</td><td class="num">+36 MB</td><td>1,976 檔 × 42 期</td></tr>
+<tr><td>目前</td><td class="num">13 MB</td><td>已用 2.5%</td></tr>
+<tr><td>＋ 歷史日頻</td><td class="num">+173 MB</td><td>548,418 列 × 330 bytes（實測）</td></tr>
+<tr><td>＋ 十年季報</td><td class="num">+36 MB</td><td>約 1,976 檔 × 46 期</td></tr>
 <tr><td>＋ 年度彙總、配息全量</td><td class="num">+19 MB</td><td></td></tr>
 <tr><td><strong>回補全部完成</strong></td><td class="num"><strong>約 240 MB</strong></td><td>剩餘 272 MB</td></tr>
 <tr><td>每日同步成長</td><td class="num">+0.9 MB／交易日</td><td>2,754 列 × 330 bytes</td></tr>
-<tr><td><strong>預估爆掉時間</strong></td><td class="num"><strong>約 1.2 年後</strong></td><td>272 MB ÷ 0.9 MB ≈ 300 個交易日</td></tr>
+<tr><td><strong>預估爆掉時間</strong></td><td class="num"><strong>約 1.2 年後</strong></td><td>272 ÷ 0.9 ≈ 300 個交易日</td></tr>
 </table></div>
-
-<h3>做法，由簡到繁</h3>
 
 <div class="todo">
 <div>
-  <h4>方案 A：定期修剪 stock_daily <span class="tag ok" style="border-color:#4ade80;color:#15803d">推薦</span></h4>
-  <p>保留策略跟現在的取樣一樣——<strong>每月最後一個交易日 ＋ 最近 90 天</strong>，中間的逐日刪掉。</p>
-  <p>每季跑一次，容量就<strong>穩定在 240 MB 左右不再成長</strong>。被刪掉的資料完整保留在 Parquet 裡，
-  要精確到某一天再去查那邊。</p>
-  <p><small>實作成本：一支排程 SQL。不損失任何已經做出來的篩選能力。</small></p>
+  <h4>方案 A：定期修剪 stock_daily <span class="tag" style="border-color:#4ade80;color:#15803d">推薦</span></h4>
+  <p>保留「每月最後一個交易日 ＋ 最近 90 天」，中間逐日刪掉。每季跑一次，
+  容量<strong>穩定在 240 MB 左右不再成長</strong>。被刪的資料完整留在 Parquet。</p>
+  <p><small>成本：一支排程 SQL。不損失任何篩選能力。</small></p>
 </div>
 <div>
   <h4>方案 B：Parquet 完全分層</h4>
-  <p>資料庫只留最近 3 個月當熱快取，所有歷史都在 Parquet。</p>
-  <p>容量降到 <strong>約 80 MB</strong>，但線上要查歷史基準日就得在 Vercel function 裡跑 DuckDB
-  讀遠端 Parquet——冷啟動要載二進位檔、每次請求要抓十幾 MB，體感會明顯變慢。
-  而且得先做完第四節第 4 項的按年分檔。</p>
-  <p><small>適合「歷史查詢很少用，偶爾在本機查」的情境。</small></p>
+  <p>資料庫只留最近 3 個月，容量降到約 80 MB。但線上查歷史基準日要在
+  Vercel function 裡跑 DuckDB 讀遠端 Parquet——冷啟動載二進位檔、
+  每次請求抓十幾 MB，體感會明顯變慢，且要先做完待辦第 5 項。</p>
 </div>
 <div>
   <h4>方案 C：換或升級資料庫</h4>
   <ul>
-    <li><strong>Neon Launch</strong>　約 US$19／月，10 GB — 最省事，但要付錢</li>
-    <li><strong>Turso</strong>　免費 5 GB（SQLite 相容）— 免費額度大十倍，但要改 driver 與部分 SQL</li>
+    <li><strong>Neon Launch</strong>　約 US$19／月，10 GB — 最省事</li>
+    <li><strong>Turso</strong>　免費 5 GB（SQLite 相容）— 要改 driver 與部分 SQL</li>
     <li><strong>Supabase</strong>　免費 500 MB — 跟現在一樣，換了沒意義</li>
   </ul>
 </div>
 </div>
 
 <div class="box ok">
-<p><strong>能不能用 Parquet 處理？可以，而且已經在做了。</strong></p>
-<p>完整的十年逐日（每檔 2,860 列）都會寫成 Parquet 放 GitHub Release，
-實測壓縮後每檔 39–59 KB，全市場約 <strong>150 MB</strong>，不計入 repo 大小、單檔上限 2 GB。</p>
-<p>所以資料庫其實只是「熱快取」——<strong>方案 A 刪掉的東西一筆都沒有真的消失</strong>。
-查法不用下載整包：</p>
+<p><strong>Parquet 已經在扛了。</strong>完整十年逐日（每檔約 2,860 列）寫成 Parquet 放 GitHub Release，
+實測壓縮後每檔 39–59 KB、全市場約 150 MB，不計入 repo 大小、單檔上限 2 GB。</p>
+<p>所以資料庫只是「熱快取」，<strong>方案 A 刪掉的東西一筆都沒真的消失</strong>。查法不用下載整包：</p>
 <p><code>SELECT date, close FROM 'https://github.com/cwzstork/stock-data/releases/download/daily-parquet/2330.parquet' WHERE date >= '2020-01-01'</code></p>
 <p>Parquet 每年增加約 15 MB，以 GitHub Release 的額度可以用上百年。</p>
 </div>
 
 <div class="meta">
-  產生於 2026-09-29　|　資料庫 Neon PostgreSQL 18.6　|　專案 <code>D:\stock</code> · <code>cwzstork/stock-data</code><br>
-  所有數字皆為當下實測值，非估算。回補進度會持續變動，容量與涵蓋區間請以篩選器畫面上的「基準日」下拉為準。
+  產生於 2026-09-29　|　Neon PostgreSQL 18.6　|　<code>D:\stock</code> · <code>cwzstork/stock-data</code><br>
+  所有數字皆為當下實測值，非估算。回補進度會持續變動，涵蓋區間以篩選器畫面的「基準日」下拉為準。
 </div>
 
 </div>
