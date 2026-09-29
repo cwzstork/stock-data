@@ -24,6 +24,7 @@ import {
   type PerRow,
   type PriceRow,
 } from '../src/lib/finmind';
+import { readR2Config, uploadDailyParquet } from '../src/lib/parquet';
 
 try {
   process.loadEnvFile('.env');
@@ -240,6 +241,9 @@ function aggregate(stockId: string, prices: PriceRow[], pers: PerRow[]): AnnualR
   return out;
 }
 
+// 沒設定 R2 就是 null，整段外存會安靜跳過
+const R2 = readR2Config();
+
 async function runAnnual(stockId: string) {
   const prices = await fetchPriceHistory(stockId, START_DATE);
   await sleep(CALL_GAP_MS);
@@ -248,6 +252,19 @@ async function runAnnual(stockId: string) {
 
   const rows = aggregate(stockId, prices, pers);
   if (!COMMIT || rows.length === 0) return { rows: rows.length, dropped: 0, conflicts: [], note: '' };
+
+  // 日頻明細順手外存。這裡不用多打任何一次 API——prices 本來就抓進來了，
+  // 只是彙總完就丟掉太可惜，而它進資料庫會撞爆免費層容量。
+  let parquetNote = '';
+  if (R2 && prices.length) {
+    try {
+      const up = await uploadDailyParquet(R2, stockId, prices);
+      parquetNote = `  parquet ${up.rows} 列`;
+    } catch (e) {
+      // 外存失敗不該讓年度彙總跟著失敗，那才是主要產出
+      console.warn(`      ! ${stockId} Parquet 外存失敗: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   const c = cols(rows, [
     (r) => r.stockId,
@@ -285,7 +302,7 @@ async function runAnnual(stockId: string) {
     rows: rows.length,
     dropped: 0,
     conflicts: [],
-    note: `${rows[0].year}~${last.year} 最新年均價 ${Number(last.avgClose).toFixed(2)}`,
+    note: `${rows[0].year}~${last.year} 最新年均價 ${Number(last.avgClose).toFixed(2)}${parquetNote}`,
   };
 }
 
@@ -368,7 +385,11 @@ async function main() {
     `起始 ${START_DATE}　本次上限 ${limit} 檔　每檔 ${ds.calls} 次呼叫　間隔 ${(itemGap / 1000).toFixed(1)}s`,
   );
   const p0 = await progress(ds.key);
-  console.log(`整體進度 ${p0.done} / ${p0.total}\n`);
+  console.log(`整體進度 ${p0.done} / ${p0.total}`);
+  if (ds.key === 'annual') {
+    console.log(R2 ? `日頻明細外存 R2：${R2.bucket}/${R2.prefix}/` : '日頻明細外存：未設定 R2，略過');
+  }
+  console.log('');
 
   const targets = await pickTargets(ds, limit);
   if (targets.length === 0) {
