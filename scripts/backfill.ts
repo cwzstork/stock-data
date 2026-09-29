@@ -245,6 +245,54 @@ function aggregate(stockId: string, prices: PriceRow[], pers: PerRow[]): AnnualR
 const PARQUET_DIR = readParquetDir();
 let parquetFiles = 0;
 let parquetBytes = 0;
+let dailyRows = 0;
+
+/**
+ * 挑出要寫進 stock_daily 的日期：每月最後一個交易日 ＋ 最近 N 個交易日。
+ *
+ * 「每月最後一個交易日」不能用月底日期去猜——月底可能是假日，
+ * 而且個股停牌、剛上市都會讓實際交易日缺漏。只能從實際有資料的日期裡挑。
+ */
+function pickDailyDates(prices: PriceRow[]): Set<string> {
+  const sorted = [...prices].map((p) => p.date).sort();
+  const picked = new Set<string>(sorted.slice(-DAILY_RECENT_DAYS));
+
+  const lastOfMonth = new Map<string, string>();
+  for (const d of sorted) lastOfMonth.set(d.slice(0, 7), d);
+  for (const d of [...lastOfMonth.values()].sort().slice(-DAILY_MONTH_ENDS)) picked.add(d);
+
+  return picked;
+}
+
+async function writeDailyRows(stockId: string, prices: PriceRow[], pers: PerRow[]) {
+  const wanted = pickDailyDates(prices);
+  const perByDate = new Map(pers.map((p) => [p.date, p]));
+
+  const rows = prices.filter((p) => wanted.has(p.date));
+  if (rows.length === 0) return 0;
+
+  const c = cols(rows, [
+    () => stockId,
+    (r) => r.date,
+    (r) => num(r.close),
+    (r) => num(r.Trading_Volume),
+    (r) => num(r.Trading_money),
+    (r) => num(perByDate.get(r.date)?.dividend_yield ?? null),
+    (r) => num(perByDate.get(r.date)?.PER ?? null),
+    (r) => num(perByDate.get(r.date)?.PBR ?? null),
+  ]);
+  return prisma.$executeRawUnsafe(
+    `INSERT INTO stock_daily (stock_id, trade_date, close, volume, turnover, dividend_yield, per, pbr)
+     SELECT id, dt::date, cl::numeric, vol::bigint, tv::bigint, dy::numeric, pe::numeric, pb::numeric
+       FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+                   $7::text[], $8::text[])
+            AS x(id, dt, cl, vol, tv, dy, pe, pb)
+     ON CONFLICT (stock_id, trade_date) DO UPDATE SET
+       close = EXCLUDED.close, volume = EXCLUDED.volume, turnover = EXCLUDED.turnover,
+       dividend_yield = EXCLUDED.dividend_yield, per = EXCLUDED.per, pbr = EXCLUDED.pbr`,
+    ...c,
+  );
+}
 
 async function runAnnual(stockId: string) {
   const prices = await fetchPriceHistory(stockId, START_DATE);
@@ -269,6 +317,9 @@ async function runAnnual(stockId: string) {
       console.warn(`      ! ${stockId} Parquet 產生失敗: ${e instanceof Error ? e.message : e}`);
     }
   }
+
+  const daily = await writeDailyRows(stockId, prices, pers);
+  dailyRows += daily;
 
   const c = cols(rows, [
     (r) => r.stockId,
@@ -306,7 +357,7 @@ async function runAnnual(stockId: string) {
     rows: rows.length,
     dropped: 0,
     conflicts: [],
-    note: `${rows[0].year}~${last.year} 最新年均價 ${Number(last.avgClose).toFixed(2)}${parquetNote}`,
+    note: `${rows[0].year}~${last.year} 均價 ${Number(last.avgClose).toFixed(2)}  日頻 ${daily} 列${parquetNote}`,
   };
 }
 
@@ -332,6 +383,19 @@ const CALL_GAP_MS = Math.round(3_600_000 / CALLS_PER_HOUR);
 
 /** 已經補過的檔多久之後才重抓 */
 const REFRESH_DAYS = Number(flag('refresh') ?? 30);
+
+/**
+ * 回補期間要一併寫進 stock_daily 的歷史日期。
+ *
+ * 十年日頻全放進資料庫要 690 萬列、超過 1 GB，撞爆 Neon 免費層 0.5 GB。
+ * 但只留「每月最後一個交易日」的話，十年也才 120 期、約 122 MB，
+ * 用一半的容量換到二十倍的時間跨度。再加上近三個月的每一天，
+ * 就同時涵蓋「長期回顧」與「近期逐日比對」兩種用法。
+ *
+ * 完整的十年逐日仍然在 Parquet 裡，要精確到某一天再去查那邊。
+ */
+const DAILY_RECENT_DAYS = Number(flag('recentDays') ?? 61);
+const DAILY_MONTH_ENDS = Number(flag('monthEnds') ?? 120);
 
 async function pickTargets(ds: Dataset, limit: number) {
   if (ONLY?.length) {
@@ -394,6 +458,7 @@ async function main() {
     console.log(
       PARQUET_DIR ? `日頻明細外存：${PARQUET_DIR}` : '日頻明細外存：未設定 PARQUET_DIR，略過',
     );
+    console.log(`寫入資料庫的日期：每月最後交易日 ${DAILY_MONTH_ENDS} 期 ＋ 最近 ${DAILY_RECENT_DAYS} 個交易日`);
   }
   console.log('');
 
@@ -443,6 +508,7 @@ async function main() {
   console.log(
     `\n本次：有資料 ${ok}　無資料 ${empty}　失敗 ${failed}` + (dropped ? `　去除重複列 ${dropped}` : ''),
   );
+  if (dailyRows) console.log(`寫入 stock_daily：${dailyRows.toLocaleString()} 列`);
   if (parquetFiles) {
     console.log(`Parquet：${parquetFiles} 檔 / ${(parquetBytes / 1024 / 1024).toFixed(1)} MB`);
   }
