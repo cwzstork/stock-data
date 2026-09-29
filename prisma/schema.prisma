@@ -29,6 +29,7 @@ model Stock {
   quarterly StockQuarterly[]
   dividend  StockDividend[]
   annual    StockAnnual[]
+  insider   StockInsider[]
 
   @@index([market])
   @@index([industry])
@@ -42,11 +43,15 @@ model Stock {
 /// 實際語意是「該日期當時最新的股本」，所以這裡存財報基準日，
 /// 查詢時取 reportDate <= 指定日期的最新一筆。
 model StockCapital {
-  stockId    String   @map("stock_id") @db.VarChar(10)
+  stockId      String   @map("stock_id") @db.VarChar(10)
   /// 財報基準日（每季季底）
-  reportDate DateTime @map("report_date") @db.Date
+  reportDate   DateTime @map("report_date") @db.Date
   /// 股本，單位：元（上游原始單位，不在寫入時換算，避免精度流失）
-  capital    BigInt
+  capital      BigInt
+  /// 已發行普通股數。算董監持股比例的分母。
+  /// 實測面額 10 元的公司剛好等於 capital/10，但特別股與非 10 元面額會不同，
+  /// 所以直接存上游給的數字，不要自己除。
+  issuedShares BigInt?  @map("issued_shares")
 
   stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
 
@@ -111,6 +116,10 @@ model StockQuarterly {
   eps             Decimal? @db.Decimal(10, 2)
 
   // ── 資產負債表（期末時點）──
+  /// 流動資產／流動負債。算流動比率用，一般業與證券期貨業才有
+  currentAssets      BigInt? @map("current_assets")
+  currentLiabilities BigInt? @map("current_liabilities")
+
   totalAssets       BigInt?  @map("total_assets")
   totalLiabilities  BigInt?  @map("total_liabilities")
   totalEquity       BigInt?  @map("total_equity")
@@ -226,4 +235,32 @@ model StockAnnual {
   @@id([stockId, year])
   @@index([year])
   @@map("stock_annual")
+}
+
+/// 內部人持股（董監、經理人、大股東）
+/// 來源：證交所 t187ap11_L 與櫃買 mopsfin_t187ap11_O，逐人明細，全市場一次呼叫
+///
+/// 上游是「一人一列」，直接加總會嚴重高估：
+/// 中華電的交通部同時掛董事長、七席董事、大股東共九列，每一列都記全額
+/// 2,737,718,976 股，加起來持股比例會變成 317%。
+/// 所以寫入前一定要先依姓名去重（同一人取最大值），去重後是 35.31%，
+/// 才是交通部實際持有的比例。
+model StockInsider {
+  stockId   String   @map("stock_id") @db.VarChar(10)
+  /// 資料所屬月份的月底，例如 11508 → 2026-08-31
+  periodEnd DateTime @map("period_end") @db.Date
+
+  /// 董事長／副董事長／常務董事／董事／獨立董事／監察人
+  directorShares  BigInt? @map("director_shares")
+  directorPledged BigInt? @map("director_pledged")
+  /// 總經理／副總經理／經理／協理／副理／財務會計主管
+  managerShares   BigInt? @map("manager_shares")
+  /// 職稱為「大股東」者。與董監會重疊（法人大股東常同時是董事），這是定義使然
+  majorShares     BigInt? @map("major_shares")
+
+  stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
+
+  @@id([stockId, periodEnd])
+  @@index([periodEnd])
+  @@map("stock_insider")
 }

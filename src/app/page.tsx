@@ -135,7 +135,18 @@ const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'streak', label: '連續配息(年)', right: true },
   { key: 'hy5', label: '5年歷史殖(%)', right: true },
   { key: 'hy10', label: '10年歷史殖(%)', right: true },
+  { key: 'hy5_min', label: '5年最低殖(%)', right: true },
+  { key: 'avg_div5', label: '5年均股利', right: true },
   { key: 'min_per5', label: '5年最低PER', right: true },
+  { key: 'cheap_div', label: '便宜價(股利)', right: true },
+  { key: 'cheap_per', label: '便宜價(本益比)', right: true },
+  { key: 'cheap_pbr', label: '便宜價(淨值)', right: true },
+  { key: 'current_ratio', label: '流動比(%)', right: true },
+  { key: 'roa', label: 'ROA(%)', right: true },
+  { key: 'director_pct', label: '董監持股(%)', right: true },
+  { key: 'pledge_pct', label: '董監設質(%)', right: true },
+  { key: 'manager_pct', label: '經理人持股(%)', right: true },
+  { key: 'major_pct', label: '大股東持股(%)', right: true },
   { key: null, label: '財報期別' },
 ];
 
@@ -169,7 +180,18 @@ function Row({ r }: { r: ScreenerRow }) {
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.streak, 0)}</td>
       <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.hy5, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.hy10, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.hy5_min, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.avg_div5, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.min_per5, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.cheap_div, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.cheap_per, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.cheap_pbr, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.current_ratio, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.roa, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.director_pct, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.pledge_pct, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.manager_pct, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.major_pct, 2)}</td>
       <td className="px-2 py-1 whitespace-nowrap text-zinc-500">{r.period_end ?? dash}</td>
     </tr>
   );
@@ -339,6 +361,31 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
               placeholder="例：12" className={inputCls} />
           </Field>
 
+          <Field label="流動比率下限 (%)">
+            <input type="number" step="any" name="crMin" defaultValue={f.crMin ?? ''}
+              placeholder="例：150" className={inputCls} />
+          </Field>
+
+          <Field label="ROA 年化下限 (%)">
+            <input type="number" step="any" name="roaMin" defaultValue={f.roaMin ?? ''}
+              placeholder="例：8" className={inputCls} />
+          </Field>
+
+          <Field label="董監持股下限 (%)">
+            <input type="number" step="any" name="dirMin" defaultValue={f.dirMin ?? ''}
+              placeholder="例：20" className={inputCls} />
+          </Field>
+
+          <Field label="董監設質上限 (%)">
+            <input type="number" step="any" name="pledgeMax" defaultValue={f.pledgeMax ?? ''}
+              placeholder="例：10" className={inputCls} />
+          </Field>
+
+          <Field label="股價 ÷ 便宜價 上限">
+            <input type="number" step="any" name="cheapRatioMax" defaultValue={f.cheapRatioMax ?? ''}
+              placeholder="1 = 股價低於便宜價" className={inputCls} />
+          </Field>
+
           <Field label="負債比上限 (%)">
             <input
               type="number"
@@ -440,7 +487,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[2700px] text-sm">
+            <table className="w-full min-w-[3900px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {COLUMNS.map((c) => (
@@ -503,6 +550,16 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
             問的是「用今天的價格買，領過去的平均股利有多少報酬」。
             5年／10年<strong>歷史殖</strong> = 每年股利 ÷ <strong>當年均價</strong>再平均，
             問的是「過去這幾年買的人平均領到多少」。那一年沒配息就算 0%。
+            <br />
+            <strong>便宜價</strong>三欄的假設不同：股利法＝近5年平均股利 ÷ 5%；
+            本益比法＝年化EPS × 近5年最低本益比；淨值法＝每股淨值 × 近5年最低股價淨值比。
+            「股價÷便宜價」篩選取三者中<strong>最寬鬆</strong>的一個當門檻——
+            三種假設本來就不會同時成立，取最嚴的幾乎篩不到東西。
+            <br />
+            <strong>董監／經理人／大股東持股</strong>來自公開申報的逐人明細，
+            同一人兼多職會重複列示，寫入前已依姓名去重。三者會互相重疊
+            （法人大股東常同時是董事），這是定義使然不是重複計算。
+            設質比例的分母是董監自己的持股，不是總股數。
             <br />
             財報是<strong>累計數</strong>：EPS 與各項比率的分子都是年初至該季，
             ROE 已乘以 4/季別年化以便比較。財報只取交易日之前已公告的期別，不會用到未來資料。

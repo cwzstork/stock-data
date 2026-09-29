@@ -50,6 +50,16 @@ export interface Filters {
   y10Min: number | null;
   /** 連續配息年數下限 */
   streakMin: number | null;
+  /** 流動比率下限(%) */
+  crMin: number | null;
+  /** ROA 年化下限(%) */
+  roaMin: number | null;
+  /** 董監持股下限(%) */
+  dirMin: number | null;
+  /** 董監設質上限(%) */
+  pledgeMax: number | null;
+  /** 股價相對便宜價的上限，例如 1 表示「股價 <= 便宜價」 */
+  cheapRatioMax: number | null;
   /** 5 年歷史平均殖利率下限(%) */
   hy5Min: number | null;
   /** 10 年歷史平均殖利率下限(%) */
@@ -87,6 +97,32 @@ const RATIO = {
   yield10: 'CASE WHEN d.close > 0 THEN dy.avg10 * 100.0 / d.close END',
   // 自己算的年化殖利率。ETF 交易所不公告，除息後也沒有更新延遲
   ttm_yield: 'CASE WHEN d.close > 0 THEN dv.ttm_cash * 100.0 / d.close END',
+  // 流動比率。銀行、金控、保險的資產負債表沒有流動／非流動之分，會是空的
+  current_ratio:
+    'CASE WHEN q.current_liabilities > 0 THEN q.current_assets * 100.0 / q.current_liabilities END',
+  // ROA 跟 ROE 一樣要年化：財報是累計數，Q2 只有半年淨利
+  roa: `CASE WHEN q.total_assets > 0
+          THEN q.net_income_parent * 100.0 / q.total_assets
+               * (4.0 / EXTRACT(QUARTER FROM q.period_end))
+        END`,
+  // 三種便宜價，各自的假設不同，所以三欄都留讓你自己判斷
+  //   股利法   近5年平均股利 ÷ 5%（等於 ×20）——存股角度
+  //   本益比法 年化EPS × 近5年最低本益比——獲利角度
+  //   淨值法   每股淨值 × 近5年最低股價淨值比——資產角度
+  cheap_div: 'dy.avg5 * 20',
+  cheap_per: `CASE WHEN q.eps IS NOT NULL AND an.min_per5 IS NOT NULL
+                THEN q.eps * (4.0 / EXTRACT(QUARTER FROM q.period_end)) * an.min_per5 END`,
+  cheap_pbr: 'q.book_value_per_share * an.min_pbr5',
+  // 內部人持股比例。分母是已發行普通股數
+  director_pct:
+    'CASE WHEN cap.issued_shares > 0 THEN ins.director_shares * 100.0 / cap.issued_shares END',
+  manager_pct:
+    'CASE WHEN cap.issued_shares > 0 THEN ins.manager_shares * 100.0 / cap.issued_shares END',
+  major_pct:
+    'CASE WHEN cap.issued_shares > 0 THEN ins.major_shares * 100.0 / cap.issued_shares END',
+  // 設質比例的分母是董監自己的持股，不是總股數
+  pledge_pct:
+    'CASE WHEN ins.director_shares > 0 THEN ins.director_pledged * 100.0 / ins.director_shares END',
   roe: `CASE WHEN q.equity_parent > 0
           THEN q.net_income_parent * 100.0 / q.equity_parent
                * (4.0 / EXTRACT(QUARTER FROM q.period_end))
@@ -115,6 +151,17 @@ const SORT_COLUMNS = {
   yield5: 'CASE WHEN d.close > 0 THEN dy.avg5 * 100.0 / d.close END',
   yield10: 'CASE WHEN d.close > 0 THEN dy.avg10 * 100.0 / d.close END',
   streak: 'dy.streak',
+  current_ratio: RATIO.current_ratio,
+  roa: RATIO.roa,
+  cheap_div: RATIO.cheap_div,
+  cheap_per: RATIO.cheap_per,
+  cheap_pbr: RATIO.cheap_pbr,
+  director_pct: RATIO.director_pct,
+  manager_pct: RATIO.manager_pct,
+  major_pct: RATIO.major_pct,
+  pledge_pct: RATIO.pledge_pct,
+  hy5_min: 'an.hy5_min',
+  avg_div5: 'dy.avg5',
   hy5: 'an.hy5',
   hy10: 'an.hy10',
   min_per5: 'an.min_per5',
@@ -181,6 +228,11 @@ export function parseFilters(params: RawParams): Filters {
     y5Min: toNumber(toStr(params.y5Min)),
     y10Min: toNumber(toStr(params.y10Min)),
     streakMin: toNumber(toStr(params.streakMin)),
+    crMin: toNumber(toStr(params.crMin)),
+    roaMin: toNumber(toStr(params.roaMin)),
+    dirMin: toNumber(toStr(params.dirMin)),
+    pledgeMax: toNumber(toStr(params.pledgeMax)),
+    cheapRatioMax: toNumber(toStr(params.cheapRatioMax)),
     hy5Min: toNumber(toStr(params.hy5Min)),
     hy10Min: toNumber(toStr(params.hy10Min)),
     minPer5Max: toNumber(toStr(params.minPer5Max)),
@@ -223,6 +275,17 @@ export interface ScreenerRow {
   hy10: string | null;
   min_per5: string | null;
   low5: string | null;
+  hy5_min: string | null;
+  avg_div5: string | null;
+  current_ratio: string | null;
+  roa: string | null;
+  cheap_div: string | null;
+  cheap_per: string | null;
+  cheap_pbr: string | null;
+  director_pct: string | null;
+  manager_pct: string | null;
+  major_pct: string | null;
+  pledge_pct: string | null;
 }
 
 /**
@@ -237,7 +300,7 @@ export interface ScreenerRow {
  */
 const CAPITAL_LATERAL = `
   LEFT JOIN LATERAL (
-    SELECT k.capital
+    SELECT k.capital, k.issued_shares
       FROM stock_capital k
      WHERE k.stock_id = d.stock_id
      ORDER BY (k.report_date <= d.trade_date) DESC, abs(k.report_date - d.trade_date)
@@ -324,10 +387,12 @@ const ANNUAL_LATERAL = `
   LEFT JOIN LATERAL (
     SELECT avg(hist_yield) FILTER (WHERE year > yr_base - 5)  AS hy5,
            avg(hist_yield) FILTER (WHERE year > yr_base - 10) AS hy10,
+           min(hist_yield) FILTER (WHERE year > yr_base - 5)  AS hy5_min,
            min(min_per)    FILTER (WHERE year > yr_base - 5)  AS min_per5,
+           min(min_pbr)    FILTER (WHERE year > yr_base - 5)  AS min_pbr5,
            min(low)        FILTER (WHERE year > yr_base - 5)  AS low5
       FROM (
-        SELECT a.year, a.min_per, a.low,
+        SELECT a.year, a.min_per, a.min_pbr, a.low,
                extract(year from d.trade_date)::int - 1 AS yr_base,
                CASE WHEN a.avg_close > 0
                     THEN coalesce(dd.cash, 0) * 100.0 / a.avg_close END AS hist_yield
@@ -342,6 +407,21 @@ const ANNUAL_LATERAL = `
            AND a.year <= extract(year from d.trade_date)::int - 1
       ) t
   ) an ON true`;
+
+/**
+ * 內部人持股。取交易日之前最新公告的那個月。
+ *
+ * 比例的分母用「已發行普通股數」，不是股本除以 10——
+ * 面額 10 元的公司兩者剛好相等，但非 10 元面額或有特別股的就會差。
+ */
+const INSIDER_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT *
+      FROM stock_insider ii
+     WHERE ii.stock_id = d.stock_id AND ii.period_end <= d.trade_date
+     ORDER BY ii.period_end DESC
+     LIMIT 1
+  ) ins ON true`;
 
 interface Where {
   sql: string;
@@ -397,15 +477,49 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.hy5Min !== null) add('an.hy5 >= ?', f.hy5Min);
   if (f.hy10Min !== null) add('an.hy10 >= ?', f.hy10Min);
   if (f.minPer5Max !== null) add('an.min_per5 <= ?', f.minPer5Max);
+  if (f.crMin !== null) add(`(${RATIO.current_ratio}) >= ?`, f.crMin);
+  if (f.roaMin !== null) add(`(${RATIO.roa}) >= ?`, f.roaMin);
+  if (f.dirMin !== null) add(`(${RATIO.director_pct}) >= ?`, f.dirMin);
+  if (f.pledgeMax !== null) add(`(${RATIO.pledge_pct}) <= ?`, f.pledgeMax);
+  // 三種便宜價取最寬鬆的一個當門檻：只要對其中一種來說夠便宜就算數。
+  // 用最嚴格的會幾乎篩不到東西，三種假設本來就不會同時成立。
+  if (f.cheapRatioMax !== null) {
+    add(
+      `d.close <= ? * GREATEST(
+         COALESCE(${RATIO.cheap_div}, 0),
+         COALESCE(${RATIO.cheap_per}, 0),
+         COALESCE(${RATIO.cheap_pbr}, 0))
+       AND GREATEST(
+         COALESCE(${RATIO.cheap_div}, 0),
+         COALESCE(${RATIO.cheap_per}, 0),
+         COALESCE(${RATIO.cheap_pbr}, 0)) > 0`,
+      f.cheapRatioMax,
+    );
+  }
 
   return { sql: parts.join('\n     AND '), values };
 }
 
-/** 資料庫裡有行情的交易日，新到舊 */
+/**
+ * 可以當基準日的交易日，新到舊。
+ *
+ * 只列有「上市」資料的日子。三個市場的 open API 更新時間不一致：
+ * 興櫃常常先更新，上市與上櫃的日報表要到收盤後一兩個小時才齊。
+ * 若不過濾，剛收盤那段時間資料庫裡會出現一個只有興櫃 360 筆的日期，
+ * 而它是最新的、會被當成預設基準日——畫面上就變成查台積電查不到東西。
+ *
+ * 用「有沒有上市資料」判斷而不是筆數門檻，是因為門檻要訂多少沒有依據，
+ * 而上市是最大的市場，它有資料就代表這天的行情實質上齊了。
+ */
 export async function getTradeDates(): Promise<string[]> {
   const rows = await prisma.$queryRawUnsafe<{ d: string }[]>(
-    `SELECT to_char(trade_date, 'YYYY-MM-DD') AS d
-       FROM stock_daily GROUP BY trade_date ORDER BY trade_date DESC LIMIT 400`,
+    `SELECT to_char(d.trade_date, 'YYYY-MM-DD') AS d
+       FROM stock_daily d
+       JOIN stock s ON s.stock_id = d.stock_id
+      WHERE s.market = 'twse'
+      GROUP BY d.trade_date
+      ORDER BY d.trade_date DESC
+      LIMIT 400`,
   );
   return rows.map((r) => r.d);
 }
@@ -445,7 +559,18 @@ const SELECT_COLS = `
   round(an.hy5, 2)::text                       AS hy5,
   round(an.hy10, 2)::text                      AS hy10,
   an.min_per5::text                            AS min_per5,
-  an.low5::text                                AS low5`;
+  an.low5::text                                AS low5,
+  round(an.hy5_min, 2)::text                   AS hy5_min,
+  round(dy.avg5, 4)::text                      AS avg_div5,
+  round((${RATIO.current_ratio})::numeric, 2)::text AS current_ratio,
+  round((${RATIO.roa})::numeric, 2)::text      AS roa,
+  round((${RATIO.cheap_div})::numeric, 2)::text     AS cheap_div,
+  round((${RATIO.cheap_per})::numeric, 2)::text     AS cheap_per,
+  round((${RATIO.cheap_pbr})::numeric, 2)::text     AS cheap_pbr,
+  round((${RATIO.director_pct})::numeric, 2)::text  AS director_pct,
+  round((${RATIO.manager_pct})::numeric, 2)::text   AS manager_pct,
+  round((${RATIO.major_pct})::numeric, 2)::text     AS major_pct,
+  round((${RATIO.pledge_pct})::numeric, 2)::text    AS pledge_pct`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
@@ -459,6 +584,7 @@ function baseQuery(where: Where, f: Filters) {
     ${QUARTERLY_LATERAL}
     ${DIVIDEND_LATERAL}
     ${ANNUAL_LATERAL}
+    ${INSIDER_LATERAL}
    WHERE ${where.sql}
    ORDER BY ${SORT_COLUMNS[f.sort]} ${f.dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, s.stock_id ASC`;
 }
@@ -488,6 +614,7 @@ export async function runScreener(f: Filters, dates: string[]): Promise<Screener
     ${QUARTERLY_LATERAL}
     ${DIVIDEND_LATERAL}
     ${ANNUAL_LATERAL}
+    ${INSIDER_LATERAL}
    WHERE ${where.sql}`;
   const [{ n: total }] = await prisma.$queryRawUnsafe<{ n: number }[]>(countSql, ...where.values);
 

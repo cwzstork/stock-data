@@ -48,6 +48,8 @@ export interface CompanyProfile {
   asOfDate: string;
   /** 實收資本額（元） */
   capital: string | null;
+  /** 已發行普通股數。算董監持股比例的分母 */
+  issuedShares: string | null;
 }
 
 /** 民國日期 1150924 → 2026-09-24 */
@@ -177,10 +179,11 @@ export async function fetchEmergingQuotes(): Promise<DailyQuote[]> {
 export async function fetchCompanyProfiles(): Promise<CompanyProfile[]> {
   type TwseRow = {
     '出表日期': string; '公司代號': string; '公司簡稱': string; '實收資本額': string;
+    '已發行普通股數或TDR原股發行股數': string;
   };
   type TpexRow = {
     Date: string; SecuritiesCompanyCode: string; CompanyAbbreviation: string;
-    'Paidin.Capital.NTDollars': string;
+    'Paidin.Capital.NTDollars': string; IssueShares: string;
   };
 
   const [twse, tpex, emerging] = await Promise.all([
@@ -196,6 +199,7 @@ export async function fetchCompanyProfiles(): Promise<CompanyProfile[]> {
       market,
       asOfDate: rocToIso(r.Date),
       capital: num(r['Paidin.Capital.NTDollars']),
+      issuedShares: num(r.IssueShares),
     }));
 
   return [
@@ -205,8 +209,116 @@ export async function fetchCompanyProfiles(): Promise<CompanyProfile[]> {
       market: 'twse' as Market,
       asOfDate: rocToIso(r['出表日期']),
       capital: num(r['實收資本額']),
+      issuedShares: num(r['已發行普通股數或TDR原股發行股數']),
     })),
     ...fromTpex(tpex, 'tpex'),
     ...fromTpex(emerging, 'emerging'),
   ];
+}
+
+// ── 內部人持股 ───────────────────────────────────────────────────
+
+export interface InsiderHolding {
+  stockId: string;
+  /** 資料所屬月份的月底 */
+  periodEnd: string;
+  directorShares: string;
+  directorPledged: string;
+  managerShares: string;
+  majorShares: string;
+}
+
+/**
+ * 職稱分類。
+ *
+ * 判斷順序不能換：先看董監，再看大股東，最後才看經理人。
+ * 「副總經理」「協理」都含「理」，若先比對經理人會把董事類誤判進去。
+ */
+function classify(title: string): 'director' | 'manager' | 'major' | null {
+  if (/董事|監察人/.test(title)) return 'director';
+  if (/大股東/.test(title)) return 'major';
+  if (/經理|協理|副理|主管/.test(title)) return 'manager';
+  return null;
+}
+
+/** 民國年月 11508 → 2026-08-31（該月最後一天） */
+function rocMonthEnd(ym: string): string | null {
+  const s = String(ym).trim();
+  if (!/^\d{5,6}$/.test(s)) return null;
+  const year = Number(s.slice(0, -2)) + 1911;
+  const month = Number(s.slice(-2));
+  if (month < 1 || month > 12) return null;
+  // 下個月的第 0 天就是這個月的最後一天
+  const d = new Date(Date.UTC(year, month, 0));
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * 董監事、經理人、大股東持股（全市場一次呼叫，上市與上櫃各一支）。
+ *
+ * 上游是「一人一列」，同一個人可能因為兼多個職位而出現好幾列，
+ * 而每一列都記他的「全部持股」。直接加總會嚴重高估——
+ * 中華電的交通部掛董事長、七席董事、大股東共九列，每列都是 2,737,718,976 股，
+ * 加起來持股比例會變成 317%。
+ * 所以每一類別內都要先依姓名去重（同一人取最大值）再加總，
+ * 去重後中華電是 35.31%，符合交通部實際持股。
+ */
+export async function fetchInsiderHoldings(): Promise<InsiderHolding[]> {
+  type Row = {
+    '資料年月': string;
+    '公司代號': string;
+    '職稱': string;
+    '姓名': string;
+    '目前持股': string;
+    '設質股數': string;
+  };
+
+  const [twse, tpex] = await Promise.all([
+    getJson<Row>('上市董監持股', 'https://openapi.twse.com.tw/v1/opendata/t187ap11_L'),
+    getJson<Row>('上櫃董監持股', 'https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap11_O'),
+  ]);
+
+  // key = stockId|periodEnd，每一類別各自維護「姓名 → 最大持股」
+  interface Bucket {
+    director: Map<string, { hold: number; pledge: number }>;
+    manager: Map<string, { hold: number; pledge: number }>;
+    major: Map<string, { hold: number; pledge: number }>;
+  }
+  const byStock = new Map<string, Bucket>();
+
+  for (const r of [...twse, ...tpex]) {
+    const stockId = String(r['公司代號'] ?? '').trim();
+    const periodEnd = rocMonthEnd(r['資料年月']);
+    const kind = classify(String(r['職稱'] ?? ''));
+    if (!stockId || !periodEnd || !kind) continue;
+
+    const key = `${stockId}|${periodEnd}`;
+    let b = byStock.get(key);
+    if (!b) {
+      b = { director: new Map(), manager: new Map(), major: new Map() };
+      byStock.set(key, b);
+    }
+    const name = String(r['姓名'] ?? '').trim() || `匿名${b[kind].size}`;
+    const hold = Number(String(r['目前持股'] ?? '').replace(/[, ]/g, '')) || 0;
+    const pledge = Number(String(r['設質股數'] ?? '').replace(/[, ]/g, '')) || 0;
+    const prev = b[kind].get(name);
+    if (!prev || hold > prev.hold) b[kind].set(name, { hold, pledge });
+  }
+
+  const sum = (m: Map<string, { hold: number; pledge: number }>, f: 'hold' | 'pledge') =>
+    [...m.values()].reduce((a, v) => a + v[f], 0);
+
+  return [...byStock.entries()]
+    .map(([key, b]) => {
+      const [stockId, periodEnd] = key.split('|');
+      return {
+        stockId,
+        periodEnd,
+        directorShares: String(sum(b.director, 'hold')),
+        directorPledged: String(sum(b.director, 'pledge')),
+        managerShares: String(sum(b.manager, 'hold')),
+        majorShares: String(sum(b.major, 'hold')),
+      };
+    })
+    .sort((a, b) => a.stockId.localeCompare(b.stockId));
 }

@@ -77,6 +77,9 @@ export interface QuarterlyRow {
   eps: string | null;
 
   // ── 資產負債表：期末時點數，不是累計。單位：元 ──
+  /** 流動資產／流動負債，算流動比率用 */
+  currentAssets: string | null;
+  currentLiabilities: string | null;
   totalAssets: string | null;
   totalLiabilities: string | null;
   totalEquity: string | null;
@@ -108,6 +111,8 @@ function metaOf(r: Row) {
 type Partial_ = Omit<QuarterlyRow, 'stockId' | 'periodEnd'>;
 
 const EMPTY: Partial_ = {
+  currentAssets: null,
+  currentLiabilities: null,
   revenue: null,
   grossProfit: null,
   operatingIncome: null,
@@ -206,6 +211,10 @@ function parseIncome(r: Row, sector: Sector): Partial<Partial_> {
 
 function parseBalance(r: Row): Partial<Partial_> {
   return {
+    // 銀行、金控、保險的資產負債表沒有「流動／非流動」之分，會是 null，
+    // 流動比率對這些行業本來就不適用
+    currentAssets: toYuan(pick(r, '流動資產')),
+    currentLiabilities: toYuan(pick(r, '流動負債')),
     totalAssets: toYuan(pick(r, '資產總計', '資產總額')),
     totalLiabilities: toYuan(pick(r, '負債總計', '負債總額')),
     totalEquity: toYuan(pick(r, '權益總計', '權益總額')),

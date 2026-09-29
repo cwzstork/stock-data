@@ -14,11 +14,13 @@ import { fetchQuarterly, type QuarterlyRow } from '../src/lib/mops';
 import {
   fetchCompanyProfiles,
   fetchEmergingQuotes,
+  fetchInsiderHoldings,
   fetchTpexQuotes,
   fetchTpexValuation,
   fetchTwseQuotes,
   fetchTwseValuation,
   type DailyQuote,
+  type InsiderHolding,
   type Valuation,
 } from '../src/lib/twse';
 
@@ -118,19 +120,54 @@ async function upsertDaily(tx: Tx, rows: (DailyQuote & Partial<Valuation>)[]) {
 
 async function upsertCapital(
   tx: Tx,
-  rows: { stockId: string; asOfDate: string; capital: string }[],
+  rows: { stockId: string; asOfDate: string; capital: string; issuedShares: string | null }[],
 ) {
   let n = 0;
   for (const part of chunks(rows)) {
-    const [a, b, c] = columns(part, [(r) => r.stockId, (r) => r.asOfDate, (r) => r.capital]);
+    const [a, b, c, d] = columns(part, [
+      (r) => r.stockId,
+      (r) => r.asOfDate,
+      (r) => r.capital,
+      (r) => r.issuedShares,
+    ]);
     n += await tx.$executeRawUnsafe(
-      `INSERT INTO stock_capital (stock_id, report_date, capital)
-       SELECT id, dt::date, cap::bigint
-         FROM UNNEST($1::text[], $2::text[], $3::text[]) AS x(id, dt, cap)
-       ON CONFLICT (stock_id, report_date) DO UPDATE SET capital = EXCLUDED.capital`,
+      `INSERT INTO stock_capital (stock_id, report_date, capital, issued_shares)
+       SELECT id, dt::date, cap::bigint, sh::bigint
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[]) AS x(id, dt, cap, sh)
+       ON CONFLICT (stock_id, report_date) DO UPDATE SET
+         capital = EXCLUDED.capital, issued_shares = EXCLUDED.issued_shares`,
       a,
       b,
       c,
+      d,
+    );
+  }
+  return n;
+}
+
+async function upsertInsider(tx: Tx, rows: InsiderHolding[]) {
+  let n = 0;
+  for (const part of chunks(rows)) {
+    const c = columns(part, [
+      (r) => r.stockId,
+      (r) => r.periodEnd,
+      (r) => r.directorShares,
+      (r) => r.directorPledged,
+      (r) => r.managerShares,
+      (r) => r.majorShares,
+    ]);
+    n += await tx.$executeRawUnsafe(
+      `INSERT INTO stock_insider (stock_id, period_end, director_shares, director_pledged,
+                                  manager_shares, major_shares)
+       SELECT id, pe::date, ds::bigint, dp::bigint, ms::bigint, js::bigint
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+              AS x(id, pe, ds, dp, ms, js)
+       ON CONFLICT (stock_id, period_end) DO UPDATE SET
+         director_shares = EXCLUDED.director_shares,
+         director_pledged = EXCLUDED.director_pledged,
+         manager_shares = EXCLUDED.manager_shares,
+         major_shares = EXCLUDED.major_shares`,
+      ...c,
     );
   }
   return n;
@@ -149,6 +186,8 @@ async function upsertQuarterly(tx: Tx, rows: QuarterlyRow[]) {
       (r) => r.netIncome,
       (r) => r.netIncomeParent,
       (r) => r.eps,
+      (r) => r.currentAssets,
+      (r) => r.currentLiabilities,
       (r) => r.totalAssets,
       (r) => r.totalLiabilities,
       (r) => r.totalEquity,
@@ -159,19 +198,24 @@ async function upsertQuarterly(tx: Tx, rows: QuarterlyRow[]) {
       `INSERT INTO stock_quarterly (
          stock_id, period_end, revenue, gross_profit, operating_income, pretax_income,
          net_income, net_income_parent, eps,
+         current_assets, current_liabilities,
          total_assets, total_liabilities, total_equity, equity_parent, book_value_per_share)
        SELECT id, pe::date, rev::bigint, gp::bigint, oi::bigint, pti::bigint,
               ni::bigint, nip::bigint, eps::numeric,
+              ca::bigint, cl::bigint,
               ta::bigint, tl::bigint, te::bigint, ep::bigint, bvps::numeric
          FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
                      $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[],
-                     $13::text[], $14::text[])
-              AS x(id, pe, rev, gp, oi, pti, ni, nip, eps, ta, tl, te, ep, bvps)
+                     $13::text[], $14::text[], $15::text[], $16::text[])
+              AS x(id, pe, rev, gp, oi, pti, ni, nip, eps, ca, cl, ta, tl, te, ep, bvps)
        ON CONFLICT (stock_id, period_end) DO UPDATE SET
          revenue = EXCLUDED.revenue, gross_profit = EXCLUDED.gross_profit,
          operating_income = EXCLUDED.operating_income, pretax_income = EXCLUDED.pretax_income,
          net_income = EXCLUDED.net_income, net_income_parent = EXCLUDED.net_income_parent,
-         eps = EXCLUDED.eps, total_assets = EXCLUDED.total_assets,
+         eps = EXCLUDED.eps,
+         current_assets = EXCLUDED.current_assets,
+         current_liabilities = EXCLUDED.current_liabilities,
+         total_assets = EXCLUDED.total_assets,
          total_liabilities = EXCLUDED.total_liabilities, total_equity = EXCLUDED.total_equity,
          equity_parent = EXCLUDED.equity_parent,
          book_value_per_share = EXCLUDED.book_value_per_share`,
@@ -184,7 +228,8 @@ async function upsertQuarterly(tx: Tx, rows: QuarterlyRow[]) {
 const COUNT_SQL = `SELECT 'stock' AS t, count(*) AS n FROM stock
    UNION ALL SELECT 'stock_daily', count(*) FROM stock_daily
    UNION ALL SELECT 'stock_capital', count(*) FROM stock_capital
-   UNION ALL SELECT 'stock_quarterly', count(*) FROM stock_quarterly`;
+   UNION ALL SELECT 'stock_quarterly', count(*) FROM stock_quarterly
+   UNION ALL SELECT 'stock_insider', count(*) FROM stock_insider`;
 
 async function main() {
   const t0 = Date.now();
@@ -192,10 +237,11 @@ async function main() {
 
   // ── 1. 抓資料 ───────────────────────────────────────────────
   console.log('[1/5] 抓取來源資料…');
-  const [info, profiles, quarterly, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
+  const [info, profiles, quarterly, insiders, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
     fetchStockInfo(),
     fetchCompanyProfiles(),
     fetchQuarterly(),
+    fetchInsiderHoldings(),
     fetchTwseQuotes(),
     fetchTwseValuation(),
     fetchTpexQuotes(),
@@ -208,6 +254,7 @@ async function main() {
   console.log(`  上櫃 行情/評價                 ${tpexQ.length} / ${tpexV.length}`);
   console.log(`  興櫃 行情                      ${esbQ.length}`);
   console.log(`  季頻財報                       ${quarterly.length} 筆`);
+  console.log(`  內部人持股                     ${insiders.length} 筆`);
 
   // ── 2. 合併行情與評價 ────────────────────────────────────────
   console.log('\n[2/5] 合併行情與評價…');
@@ -241,21 +288,36 @@ async function main() {
 
   // ── 3. 股本：只在數值變動時才寫新的一筆 ──────────────────────
   console.log('\n[3/5] 比對股本…');
-  const latest = await prisma.$queryRawUnsafe<{ stock_id: string; capital: string }[]>(
-    `SELECT DISTINCT ON (stock_id) stock_id, capital::text AS capital
+  const latest = await prisma.$queryRawUnsafe<
+    { stock_id: string; capital: string; issued_shares: string | null }[]
+  >(
+    `SELECT DISTINCT ON (stock_id) stock_id, capital::text AS capital,
+            issued_shares::text AS issued_shares
        FROM stock_capital ORDER BY stock_id, report_date DESC`,
   );
-  const latestCapital = new Map(latest.map((r) => [r.stock_id, r.capital]));
+  const latestCapital = new Map(latest.map((r) => [r.stock_id, r]));
 
   const capitalRows = profiles
     .filter((p) => p.capital !== null && known.has(p.stockId))
-    .filter((p) => latestCapital.get(p.stockId) !== p.capital)
-    .map((p) => ({ stockId: p.stockId, asOfDate: p.asOfDate, capital: p.capital as string }));
+    .filter((p) => {
+      const prev = latestCapital.get(p.stockId);
+      // 股本沒變就不寫新列，否則每日同步會讓這張表跟日頻一樣大。
+      // 但已發行股數是後來才加的欄位，既有列都是 NULL——
+      // 只比對股本的話它們永遠補不到值，董監持股比例的分母就會一直是空的。
+      return !prev || prev.capital !== p.capital || (prev.issued_shares === null && p.issuedShares !== null);
+    })
+    .map((p) => ({
+      stockId: p.stockId,
+      asOfDate: p.asOfDate,
+      capital: p.capital as string,
+      issuedShares: p.issuedShares,
+    }));
   console.log(`  資料庫既有最新股本             ${latestCapital.size} 檔`);
   console.log(`  股本有變動需寫入               ${capitalRows.length} 筆`);
 
   // 財報有外鍵指向 stock，主檔沒有的（少數公開發行但未上市櫃）要濾掉
   const quarterlyRows = quarterly.filter((q) => known.has(q.stockId));
+  const insiderRows = insiders.filter((i) => known.has(i.stockId));
   const periods = [...new Set(quarterlyRows.map((q) => q.periodEnd))].sort();
   console.log(`  季頻可寫入                     ${quarterlyRows.length} 筆（期別 ${periods.join(', ')}）`);
   console.log(`  略過(主檔沒有)                 ${quarterly.length - quarterlyRows.length} 筆`);
@@ -286,10 +348,12 @@ async function main() {
         const d = await upsertDaily(tx, merged);
         const c = await upsertCapital(tx, capitalRows);
         const q = await upsertQuarterly(tx, quarterlyRows);
+        const ins = await upsertInsider(tx, insiderRows);
         console.log(`  stock            寫入 ${s} 列`);
         console.log(`  stock_daily      寫入 ${d} 列`);
         console.log(`  stock_capital    寫入 ${c} 列`);
         console.log(`  stock_quarterly  寫入 ${q} 列`);
+        console.log(`  stock_insider    寫入 ${ins} 列`);
 
         const inTx = await tx.$queryRawUnsafe<{ t: string; n: bigint }[]>(COUNT_SQL);
         console.log('  交易內表列數：', inTx.map((r) => `${r.t}=${r.n}`).join('  '));
