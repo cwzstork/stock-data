@@ -20,7 +20,10 @@ import {
   fetchDividends,
   fetchPerHistory,
   fetchPriceHistory,
+  fetchStatements,
+  fetchBalanceSheetFull,
   type DividendRow,
+  type StatementRow,
   type PerRow,
   type PriceRow,
 } from '../src/lib/finmind';
@@ -361,6 +364,224 @@ async function runAnnual(stockId: string) {
   };
 }
 
+// ── 資料集：十年季報 ──────────────────────────────────────────────
+
+/**
+ * FinMind 的 type → 我們的欄位。
+ *
+ * EquityAttributableToOwnersOfParent 在兩支 API 裡意義完全不同
+ * （損益表是「淨利歸屬母公司」，資產負債表是「母公司權益」），
+ * 所以兩張對照表分開寫、不共用，避免哪天合併時把兩者搞混。
+ */
+/**
+ * FinMind 的 type 對照。
+ *
+ * 一個概念在不同行業會有不同的 type 名稱，差一個字母就整欄抓不到，
+ * 所以每個欄位都用「依序試」的別名清單，不是單一對應。
+ */
+const INCOME_ALIASES = {
+  // 金控的 Revenue 是「淨收益」，實測 106,275,016,000
+  // ＝利息淨收益 56,958,729,000 ＋利息以外淨收益 49,316,287,000，數字自洽。
+  // 證券期貨業叫 Income（收益）。銀行沒有單一營收概念，會是 null。
+  revenue: ['Revenue', 'Income'],
+  grossProfit: ['GrossProfit'],
+  operatingIncome: ['OperatingIncome'],
+  // 銀行用 IncomeBeforeTaxFromContinuingOperations
+  pretaxIncome: ['PreTaxIncome', 'IncomeBeforeTaxFromContinuingOperations'],
+  // 金控與銀行是 IncomeAfterTax，少一個 s
+  netIncome: ['IncomeAfterTaxes', 'IncomeAfterTax', 'IncomeFromContinuingOperations'],
+  netIncomeParent: ['EquityAttributableToOwnersOfParent'],
+  // 金融業的損益表完全沒有 EPS，那是上游就沒有，不是漏抓
+  eps: ['EPS'],
+} as const;
+
+const BALANCE_ALIASES = {
+  currentAssets: ['CurrentAssets'],
+  currentLiabilities: ['CurrentLiabilities'],
+  totalAssets: ['TotalAssets'],
+  totalLiabilities: ['Liabilities'],
+  totalEquity: ['Equity'],
+  // 注意：EquityAttributableToOwnersOfParent 在損益表是「淨利歸屬母公司」、
+  // 在資產負債表是「母公司權益」，兩者意義完全不同，所以兩張表分開對照。
+  // 金融業多半沒有這一項，要用 權益總計 − 非控制權益 推回來。
+  equityParent: ['EquityAttributableToOwnersOfParent'],
+  // 富邦金這類有特別股的沒有 CapitalStock，只有 OrdinaryShare
+  capitalStock: ['CapitalStock', 'OrdinaryShare'],
+} as const;
+
+interface QuarterRow {
+  stockId: string;
+  periodEnd: string;
+  revenue: string | null;
+  grossProfit: string | null;
+  operatingIncome: string | null;
+  pretaxIncome: string | null;
+  netIncome: string | null;
+  netIncomeParent: string | null;
+  eps: string | null;
+  currentAssets: string | null;
+  currentLiabilities: string | null;
+  totalAssets: string | null;
+  totalLiabilities: string | null;
+  totalEquity: string | null;
+  equityParent: string | null;
+  bookValuePerShare: string | null;
+  capitalStock: string | null;
+}
+
+/** 一期的原始 type → 數值，之後再依別名清單挑出需要的 */
+type RawPeriod = Map<string, number>;
+
+function collect(rows: StatementRow[]): Map<string, RawPeriod> {
+  const byDate = new Map<string, RawPeriod>();
+  for (const r of rows) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) continue;
+    // _per 結尾的是佔比欄位，不是金額
+    if (r.type.endsWith('_per')) continue;
+    const v = Number(r.value);
+    if (!Number.isFinite(v)) continue;
+    let m = byDate.get(r.date);
+    if (!m) byDate.set(r.date, (m = new Map()));
+    m.set(r.type, v);
+  }
+  return byDate;
+}
+
+/** 依序試別名，回第一個有值的。缺值回 null 而不是 0 —— 兩者意義完全不同 */
+function pickNum(raw: RawPeriod | undefined, names: readonly string[]): number | null {
+  if (!raw) return null;
+  for (const n of names) {
+    const v = raw.get(n);
+    if (v !== undefined) return v;
+  }
+  return null;
+}
+
+const asText = (v: number | null) => (v === null ? null : String(v));
+
+function buildQuarters(
+  stockId: string,
+  income: StatementRow[],
+  balance: StatementRow[],
+): QuarterRow[] {
+  const inc = collect(income);
+  const bal = collect(balance);
+  const dates = [...new Set([...inc.keys(), ...bal.keys()])].sort();
+
+  return dates.map((periodEnd) => {
+    const i = inc.get(periodEnd);
+    const b = bal.get(periodEnd);
+
+    // 金融業多半沒有「歸屬母公司權益」，用 權益總計 − 非控制權益 推回來。
+    // 實測富邦金 1,284,103,748,000 − 16,453,963,000 = 1,267,649,785,000，
+    // 與證交所公告的母公司權益完全相同。
+    let equityParent = pickNum(b, BALANCE_ALIASES.equityParent);
+    if (equityParent === null) {
+      const total = pickNum(b, BALANCE_ALIASES.totalEquity);
+      const minority = pickNum(b, ['NoncontrollingInterests']);
+      if (total !== null) equityParent = total - (minority ?? 0);
+    }
+
+    // 每股淨值的分母用「股本合計」，跟證交所公告的「每股參考淨值」同口徑。
+    // 實測：統一證 29.99、台積電 248.05，與證交所完全相同。
+    //
+    // 少數有特別股的金控上游缺 CapitalStock，只能退回普通股股本，
+    // 分母偏小會讓每股淨值偏高（富邦金 90.50 vs 官方 81.22）。
+    // 這個偏差會連帶影響便宜價（淨值），金控股看那一欄要有警覺。
+    const shareBase = pickNum(b, ['CapitalStock']) ?? pickNum(b, ['OrdinaryShare']);
+    let bookValuePerShare: string | null = null;
+    if (equityParent !== null && shareBase !== null && shareBase > 0) {
+      // 台股絕大多數面額 10 元，股數 = 股本 ÷ 10
+      bookValuePerShare = (equityParent / (shareBase / 10)).toFixed(2);
+    }
+
+    return {
+      stockId,
+      periodEnd,
+      revenue: asText(pickNum(i, INCOME_ALIASES.revenue)),
+      grossProfit: asText(pickNum(i, INCOME_ALIASES.grossProfit)),
+      operatingIncome: asText(pickNum(i, INCOME_ALIASES.operatingIncome)),
+      pretaxIncome: asText(pickNum(i, INCOME_ALIASES.pretaxIncome)),
+      netIncome: asText(pickNum(i, INCOME_ALIASES.netIncome)),
+      netIncomeParent: asText(pickNum(i, INCOME_ALIASES.netIncomeParent)),
+      eps: asText(pickNum(i, INCOME_ALIASES.eps)),
+      currentAssets: asText(pickNum(b, BALANCE_ALIASES.currentAssets)),
+      currentLiabilities: asText(pickNum(b, BALANCE_ALIASES.currentLiabilities)),
+      totalAssets: asText(pickNum(b, BALANCE_ALIASES.totalAssets)),
+      totalLiabilities: asText(pickNum(b, BALANCE_ALIASES.totalLiabilities)),
+      totalEquity: asText(pickNum(b, BALANCE_ALIASES.totalEquity)),
+      equityParent: asText(equityParent),
+      bookValuePerShare,
+      capitalStock: asText(pickNum(b, BALANCE_ALIASES.capitalStock)),
+    };
+  });
+}
+
+async function runQuarterly(stockId: string) {
+  const income = await fetchStatements(stockId, START_DATE);
+  await sleep(CALL_GAP_MS);
+  const balance = await fetchBalanceSheetFull(stockId, START_DATE);
+
+  const rows = buildQuarters(stockId, income, balance);
+  if (!COMMIT || rows.length === 0) return { rows: rows.length, dropped: 0, conflicts: [], note: '' };
+
+  {
+    // 一檔最多 42 期，不用分批
+    const c = cols(rows, [
+      (r) => r.stockId,
+      (r) => r.periodEnd,
+      (r) => r.revenue,
+      (r) => r.grossProfit,
+      (r) => r.operatingIncome,
+      (r) => r.pretaxIncome,
+      (r) => r.netIncome,
+      (r) => r.netIncomeParent,
+      (r) => r.eps,
+      (r) => r.currentAssets,
+      (r) => r.currentLiabilities,
+      (r) => r.totalAssets,
+      (r) => r.totalLiabilities,
+      (r) => r.totalEquity,
+      (r) => r.equityParent,
+      (r) => r.bookValuePerShare,
+      (r) => r.capitalStock,
+    ]);
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO stock_quarterly (
+         stock_id, period_end, revenue, gross_profit, operating_income, pretax_income,
+         net_income, net_income_parent, eps, current_assets, current_liabilities,
+         total_assets, total_liabilities, total_equity, equity_parent,
+         book_value_per_share, capital_stock)
+       SELECT id, pe::date, rev::bigint, gp::bigint, oi::bigint, pti::bigint,
+              ni::bigint, nip::bigint, eps::numeric, ca::bigint, cl::bigint,
+              ta::bigint, tl::bigint, te::bigint, ep::bigint, bv::numeric, cs::bigint
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+                     $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[],
+                     $13::text[], $14::text[], $15::text[], $16::text[], $17::text[])
+              AS x(id, pe, rev, gp, oi, pti, ni, nip, eps, ca, cl, ta, tl, te, ep, bv, cs)
+       ON CONFLICT (stock_id, period_end) DO UPDATE SET
+         revenue = EXCLUDED.revenue, gross_profit = EXCLUDED.gross_profit,
+         operating_income = EXCLUDED.operating_income, pretax_income = EXCLUDED.pretax_income,
+         net_income = EXCLUDED.net_income, net_income_parent = EXCLUDED.net_income_parent,
+         eps = EXCLUDED.eps, current_assets = EXCLUDED.current_assets,
+         current_liabilities = EXCLUDED.current_liabilities,
+         total_assets = EXCLUDED.total_assets, total_liabilities = EXCLUDED.total_liabilities,
+         total_equity = EXCLUDED.total_equity, equity_parent = EXCLUDED.equity_parent,
+         book_value_per_share = EXCLUDED.book_value_per_share,
+         capital_stock = EXCLUDED.capital_stock`,
+      ...c,
+    );
+  }
+
+  const last = rows[rows.length - 1];
+  return {
+    rows: rows.length,
+    dropped: 0,
+    conflicts: [],
+    note: `${rows[0].periodEnd} ~ ${last.periodEnd}　最新單季EPS ${last.eps ?? '—'}`,
+  };
+}
+
 // ── 資料集登記 ────────────────────────────────────────────────────
 
 interface Dataset {
@@ -374,6 +595,7 @@ interface Dataset {
 const DATASETS: Dataset[] = [
   { key: 'dividend', label: '配息紀錄', calls: 1, run: runDividend },
   { key: 'annual', label: '年度彙總', calls: 2, run: runAnnual },
+  { key: 'quarterly', label: '十年季報', calls: 2, run: runQuarterly },
 ];
 
 /** FinMind register 層的文件額度是 600 次/小時，留一點餘裕給每日同步 */

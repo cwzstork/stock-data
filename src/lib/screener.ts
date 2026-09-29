@@ -60,6 +60,10 @@ export interface Filters {
   pledgeMax: number | null;
   /** 股價相對便宜價的上限，例如 1 表示「股價 <= 便宜價」 */
   cheapRatioMax: number | null;
+  /** 單季營收年增率下限(%) */
+  revYoyMin: number | null;
+  /** 近四季 ROE 下限(%) */
+  roeTtmMin: number | null;
   /** 5 年歷史平均殖利率下限(%) */
   hy5Min: number | null;
   /** 10 年歷史平均殖利率下限(%) */
@@ -86,9 +90,26 @@ export const MARKET_LABEL: Record<string, string> = {
  * 這是近似——旺淡季不均的公司會失真，等十年歷史補完會改用近四季。
  */
 const RATIO = {
-  gross_margin: 'CASE WHEN q.revenue > 0 THEN q.gross_profit * 100.0 / q.revenue END',
-  op_margin: 'CASE WHEN q.revenue > 0 THEN q.operating_income * 100.0 / q.revenue END',
-  net_margin: 'CASE WHEN q.revenue > 0 THEN q.net_income_parent * 100.0 / q.revenue END',
+  // 累計：同年度各季加總，跟證交所公告的累計數同口徑
+  gross_margin: 'CASE WHEN ytd.revenue > 0 THEN ytd.gross_profit * 100.0 / ytd.revenue END',
+  op_margin: 'CASE WHEN ytd.revenue > 0 THEN ytd.operating_income * 100.0 / ytd.revenue END',
+  net_margin: 'CASE WHEN ytd.revenue > 0 THEN ytd.net_income_parent * 100.0 / ytd.revenue END',
+  // 單季：只看最新那一季，看得出短期轉折
+  gross_margin_q: 'CASE WHEN q.revenue > 0 THEN q.gross_profit * 100.0 / q.revenue END',
+  op_margin_q: 'CASE WHEN q.revenue > 0 THEN q.operating_income * 100.0 / q.revenue END',
+  net_margin_q: 'CASE WHEN q.revenue > 0 THEN q.net_income_parent * 100.0 / q.revenue END',
+  // 單季年增率。去年同期為負或零時算不出有意義的成長率，一律留空
+  rev_yoy: 'CASE WHEN yoy.revenue > 0 THEN (q.revenue - yoy.revenue) * 100.0 / yoy.revenue END',
+  op_yoy:
+    'CASE WHEN yoy.operating_income > 0 THEN (q.operating_income - yoy.operating_income) * 100.0 / yoy.operating_income END',
+  ni_yoy:
+    'CASE WHEN yoy.net_income_parent > 0 THEN (q.net_income_parent - yoy.net_income_parent) * 100.0 / yoy.net_income_parent END',
+  // 近四季 EPS。本益比、ROE 用它比用累計年化準確
+  eps_ttm: 'CASE WHEN ttm.quarters = 4 THEN ttm.eps END',
+  roe_ttm: `CASE WHEN q.equity_parent > 0 AND ttm.quarters = 4
+              THEN ttm.net_income_parent * 100.0 / q.equity_parent END`,
+  roa_ttm: `CASE WHEN q.total_assets > 0 AND ttm.quarters = 4
+              THEN ttm.net_income_parent * 100.0 / q.total_assets END`,
   debt_ratio: 'CASE WHEN q.total_assets > 0 THEN q.total_liabilities * 100.0 / q.total_assets END',
   // 用「近 N 年平均現金股利 ÷ 基準日收盤價」。
   // 嚴格定義應該是「每年股利 ÷ 該年均價再平均」，那需要歷史股價（Phase 3-2）。
@@ -102,7 +123,7 @@ const RATIO = {
     'CASE WHEN q.current_liabilities > 0 THEN q.current_assets * 100.0 / q.current_liabilities END',
   // ROA 跟 ROE 一樣要年化：財報是累計數，Q2 只有半年淨利
   roa: `CASE WHEN q.total_assets > 0
-          THEN q.net_income_parent * 100.0 / q.total_assets
+          THEN ytd.net_income_parent * 100.0 / q.total_assets
                * (4.0 / EXTRACT(QUARTER FROM q.period_end))
         END`,
   // 三種便宜價，各自的假設不同，所以三欄都留讓你自己判斷
@@ -110,8 +131,8 @@ const RATIO = {
   //   本益比法 年化EPS × 近5年最低本益比——獲利角度
   //   淨值法   每股淨值 × 近5年最低股價淨值比——資產角度
   cheap_div: 'dy.avg5 * 20',
-  cheap_per: `CASE WHEN q.eps IS NOT NULL AND an.min_per5 IS NOT NULL
-                THEN q.eps * (4.0 / EXTRACT(QUARTER FROM q.period_end)) * an.min_per5 END`,
+  cheap_per: `CASE WHEN ttm.quarters = 4 AND ttm.eps IS NOT NULL AND an.min_per5 IS NOT NULL
+                THEN ttm.eps * an.min_per5 END`,
   cheap_pbr: 'q.book_value_per_share * an.min_pbr5',
   // 內部人持股比例。分母是已發行普通股數
   director_pct:
@@ -124,7 +145,7 @@ const RATIO = {
   pledge_pct:
     'CASE WHEN ins.director_shares > 0 THEN ins.director_pledged * 100.0 / ins.director_shares END',
   roe: `CASE WHEN q.equity_parent > 0
-          THEN q.net_income_parent * 100.0 / q.equity_parent
+          THEN ytd.net_income_parent * 100.0 / q.equity_parent
                * (4.0 / EXTRACT(QUARTER FROM q.period_end))
         END`,
 } as const;
@@ -162,6 +183,15 @@ const SORT_COLUMNS = {
   pledge_pct: RATIO.pledge_pct,
   hy5_min: 'an.hy5_min',
   avg_div5: 'dy.avg5',
+  gross_margin_q: RATIO.gross_margin_q,
+  op_margin_q: RATIO.op_margin_q,
+  net_margin_q: RATIO.net_margin_q,
+  rev_yoy: RATIO.rev_yoy,
+  op_yoy: RATIO.op_yoy,
+  ni_yoy: RATIO.ni_yoy,
+  eps_ttm: RATIO.eps_ttm,
+  roe_ttm: RATIO.roe_ttm,
+  roa_ttm: RATIO.roa_ttm,
   hy5: 'an.hy5',
   hy10: 'an.hy10',
   min_per5: 'an.min_per5',
@@ -233,6 +263,8 @@ export function parseFilters(params: RawParams): Filters {
     dirMin: toNumber(toStr(params.dirMin)),
     pledgeMax: toNumber(toStr(params.pledgeMax)),
     cheapRatioMax: toNumber(toStr(params.cheapRatioMax)),
+    revYoyMin: toNumber(toStr(params.revYoyMin)),
+    roeTtmMin: toNumber(toStr(params.roeTtmMin)),
     hy5Min: toNumber(toStr(params.hy5Min)),
     hy10Min: toNumber(toStr(params.hy10Min)),
     minPer5Max: toNumber(toStr(params.minPer5Max)),
@@ -286,6 +318,16 @@ export interface ScreenerRow {
   manager_pct: string | null;
   major_pct: string | null;
   pledge_pct: string | null;
+  gross_margin_q: string | null;
+  op_margin_q: string | null;
+  net_margin_q: string | null;
+  rev_yoy: string | null;
+  op_yoy: string | null;
+  ni_yoy: string | null;
+  eps_ttm: string | null;
+  roe_ttm: string | null;
+  roa_ttm: string | null;
+  quarters_ttm: string | null;
 }
 
 /**
@@ -324,7 +366,34 @@ const QUARTERLY_LATERAL = `
      WHERE qq.stock_id = d.stock_id AND qq.period_end <= d.trade_date
      ORDER BY qq.period_end DESC
      LIMIT 1
-  ) q ON true`;
+  ) q ON true
+  -- 累計＝同年度各季加總。資料庫存的是單季，累計不落地、查詢時現算。
+  LEFT JOIN LATERAL (
+    SELECT sum(revenue) AS revenue, sum(gross_profit) AS gross_profit,
+           sum(operating_income) AS operating_income, sum(net_income_parent) AS net_income_parent,
+           sum(eps) AS eps, count(*) AS quarters
+      FROM stock_quarterly yy
+     WHERE yy.stock_id = d.stock_id
+       AND yy.period_end <= d.trade_date
+       AND extract(year from yy.period_end) = extract(year from q.period_end)
+  ) ytd ON true
+  -- 近四季。ROE 與本益比用它才對——累計數年化是近似，旺淡季不均的公司會失真。
+  LEFT JOIN LATERAL (
+    SELECT sum(revenue) AS revenue, sum(gross_profit) AS gross_profit,
+           sum(operating_income) AS operating_income, sum(net_income_parent) AS net_income_parent,
+           sum(eps) AS eps, count(*) AS quarters
+      FROM (
+        SELECT * FROM stock_quarterly tt
+         WHERE tt.stock_id = d.stock_id AND tt.period_end <= d.trade_date
+         ORDER BY tt.period_end DESC LIMIT 4
+      ) z
+  ) ttm ON true
+  -- 去年同期，算成長率用。期別相減剛好對上（2026-06-30 → 2025-06-30）
+  LEFT JOIN LATERAL (
+    SELECT * FROM stock_quarterly pp
+     WHERE pp.stock_id = d.stock_id
+       AND pp.period_end = (q.period_end - interval '1 year')::date
+  ) yoy ON true`;
 
 /**
  * 配息彙總。
@@ -481,6 +550,8 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.roaMin !== null) add(`(${RATIO.roa}) >= ?`, f.roaMin);
   if (f.dirMin !== null) add(`(${RATIO.director_pct}) >= ?`, f.dirMin);
   if (f.pledgeMax !== null) add(`(${RATIO.pledge_pct}) <= ?`, f.pledgeMax);
+  if (f.revYoyMin !== null) add(`(${RATIO.rev_yoy}) >= ?`, f.revYoyMin);
+  if (f.roeTtmMin !== null) add(`(${RATIO.roe_ttm}) >= ?`, f.roeTtmMin);
   // 三種便宜價取最寬鬆的一個當門檻：只要對其中一種來說夠便宜就算數。
   // 用最嚴格的會幾乎篩不到東西，三種假設本來就不會同時成立。
   if (f.cheapRatioMax !== null) {
@@ -508,15 +579,20 @@ function buildWhere(f: Filters, tradeDate: string): Where {
  * 若不過濾，剛收盤那段時間資料庫裡會出現一個只有興櫃 360 筆的日期，
  * 而它是最新的、會被當成預設基準日——畫面上就變成查台積電查不到東西。
  *
- * 用「有沒有上市資料」判斷而不是筆數門檻，是因為門檻要訂多少沒有依據，
- * 而上市是最大的市場，它有資料就代表這天的行情實質上齊了。
+ * 條件是「有上市資料，而且其中有本益比」。
+ * 只看有沒有價格還不夠——歷史回補是先寫收盤價、評價資料另一支 API 提供，
+ * 收盤當天評價通常還沒發布，於是最新那天會出現「有收盤沒殖利率沒本益比」，
+ * 它又是最新的、被當成預設基準日，畫面上那三欄就整排空白。
+ *
+ * 用「有沒有本益比」而不是筆數門檻，是因為門檻要訂多少沒有依據，
+ * 而上市是最大的市場，它的評價資料到齊就代表這天的行情實質上完整了。
  */
 export async function getTradeDates(): Promise<string[]> {
   const rows = await prisma.$queryRawUnsafe<{ d: string }[]>(
     `SELECT to_char(d.trade_date, 'YYYY-MM-DD') AS d
        FROM stock_daily d
        JOIN stock s ON s.stock_id = d.stock_id
-      WHERE s.market = 'twse'
+      WHERE s.market = 'twse' AND d.per IS NOT NULL
       GROUP BY d.trade_date
       ORDER BY d.trade_date DESC
       LIMIT 400`,
@@ -570,7 +646,17 @@ const SELECT_COLS = `
   round((${RATIO.director_pct})::numeric, 2)::text  AS director_pct,
   round((${RATIO.manager_pct})::numeric, 2)::text   AS manager_pct,
   round((${RATIO.major_pct})::numeric, 2)::text     AS major_pct,
-  round((${RATIO.pledge_pct})::numeric, 2)::text    AS pledge_pct`;
+  round((${RATIO.pledge_pct})::numeric, 2)::text    AS pledge_pct,
+  round((${RATIO.gross_margin_q})::numeric, 2)::text AS gross_margin_q,
+  round((${RATIO.op_margin_q})::numeric, 2)::text    AS op_margin_q,
+  round((${RATIO.net_margin_q})::numeric, 2)::text   AS net_margin_q,
+  round((${RATIO.rev_yoy})::numeric, 2)::text        AS rev_yoy,
+  round((${RATIO.op_yoy})::numeric, 2)::text         AS op_yoy,
+  round((${RATIO.ni_yoy})::numeric, 2)::text         AS ni_yoy,
+  round((${RATIO.eps_ttm})::numeric, 2)::text        AS eps_ttm,
+  round((${RATIO.roe_ttm})::numeric, 2)::text        AS roe_ttm,
+  round((${RATIO.roa_ttm})::numeric, 2)::text        AS roa_ttm,
+  ttm.quarters::text                                 AS quarters_ttm`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。

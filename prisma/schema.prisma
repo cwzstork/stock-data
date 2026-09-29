@@ -90,12 +90,21 @@ model StockDaily {
 }
 
 /// 季頻財報
-/// 來源：證交所 / 櫃買中心 t187ap06（綜合損益表）＋ t187ap07（資產負債表）
 ///
-/// 兩件事影響查詢寫法：
-///   1. 損益表是「累計數」——Q2 是上半年累計，不是單季。
-///      要單季就拿相鄰兩季累計相減；要年化就乘以 4/季別。
-///   2. 資產負債表是「期末時點數」，不是累計，不能相減。
+/// 損益類欄位一律存「單季」，不是累計。
+///
+/// 為什麼：證交所給的是累計（Q2 = 上半年），FinMind 給的是單季，
+/// 兩者實測可精確互換——台積電 2026 Q1+Q2 單季營收相加
+/// 等於 2,404,483,690,000，與證交所公告的上半年累計一字不差，
+/// EPS 22.08 + 27.25 = 49.33 也相同。
+///
+/// 選單季當標準形式，是因為它能往上推導但反過來不行：
+///   累計   = 同年度各季加總
+///   近四季 = 最近四季加總（算近四季 EPS 與真正的 ROE 都要它）
+///   單季   = 累計相減，需要相鄰兩期都在
+/// 存累計的話，缺任何一期就算不出單季；存單季則永遠算得出累計。
+///
+/// 資產負債類欄位是「期末時點數」，不能加總也不能相減。
 ///
 /// 金額單位一律「元」（上游是千元，寫入時 ×1000，整數運算不失真），
 /// 跟 stock_capital 對齊。兩張表單位不同才是真正會出事的地雷。
@@ -104,7 +113,7 @@ model StockQuarterly {
   /// 季底日：2026Q2 → 2026-06-30
   periodEnd DateTime @map("period_end") @db.Date
 
-  // ── 損益表（累計）──
+  // ── 損益表（單季）──
   revenue         BigInt?
   grossProfit     BigInt?  @map("gross_profit")
   operatingIncome BigInt?  @map("operating_income")
@@ -112,7 +121,7 @@ model StockQuarterly {
   netIncome       BigInt?  @map("net_income")
   /// 歸屬於母公司業主。算 ROE 要用這個，不是本期淨利
   netIncomeParent BigInt?  @map("net_income_parent")
-  /// 基本每股盈餘（元），累計
+  /// 基本每股盈餘（元），單季
   eps             Decimal? @db.Decimal(10, 2)
 
   // ── 資產負債表（期末時點）──
@@ -126,6 +135,8 @@ model StockQuarterly {
   equityParent      BigInt?  @map("equity_parent")
   /// 每股參考淨值（元）
   bookValuePerShare Decimal? @map("book_value_per_share") @db.Decimal(12, 2)
+  /// 股本合計（元）。有了逐季歷史股本，回看過去日期時就不會拿到今天的股本
+  capitalStock      BigInt?  @map("capital_stock")
 
   stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
 

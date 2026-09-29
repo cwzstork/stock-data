@@ -109,48 +109,80 @@ function sortHref(params: RawParams, f: Filters, key: SortKey) {
   return `/?${withParams(params, ['sort', 'dir', 'page'], { sort: key, dir })}`;
 }
 
+/**
+ * 欄位名一律標出時間基準，因為同一個指標在不同基準下差很多：
+ *   (當日)   基準日那一天的值
+ *   (單季)   最新那一季
+ *   (累計)   該年度年初到最新一季
+ *   (近四季) 最近四季加總，ROE 與本益比用這個最準
+ *   (當期)   財報期末的時點數，不能加總
+ *   (5年)    近 5 個完整年度
+ */
 const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'stock_id', label: '股號' },
   { key: null, label: '股名' },
   { key: null, label: '市場' },
   { key: null, label: '產業' },
-  { key: 'close', label: '收盤', right: true },
-  { key: 'volume', label: '成交量(張)', right: true },
-  { key: 'turnover', label: '成交額(千元)', right: true },
-  { key: 'dividend_yield', label: '殖利率(%)', right: true },
-  { key: 'per', label: '本益比', right: true },
-  { key: 'pbr', label: '淨值比', right: true },
-  { key: 'capital', label: '股本(百萬)', right: true },
-  { key: 'gross_margin', label: '毛利率(%)', right: true },
-  { key: 'op_margin', label: '營益率(%)', right: true },
-  { key: 'net_margin', label: '淨利率(%)', right: true },
-  { key: 'roe', label: 'ROE(%)', right: true },
-  { key: 'debt_ratio', label: '負債比(%)', right: true },
-  { key: 'eps', label: 'EPS', right: true },
-  { key: 'bvps', label: '每股淨值', right: true },
-  { key: 'ttm_yield', label: '年化殖利率(%)', right: true },
-  { key: 'ttm_cash', label: '近12月股利', right: true },
-  { key: 'yield5', label: '5年均殖(%)', right: true },
-  { key: 'yield10', label: '10年均殖(%)', right: true },
+
+  { key: 'close', label: '收盤(當日)', right: true },
+  { key: 'volume', label: '成交量(當日,張)', right: true },
+  { key: 'turnover', label: '成交額(當日,千元)', right: true },
+  { key: 'dividend_yield', label: '殖利率(當日,交易所)%', right: true },
+  { key: 'per', label: '本益比(當日,近四季)', right: true },
+  { key: 'pbr', label: '股價淨值比(當日)', right: true },
+  { key: 'capital', label: '股本(當期,百萬)', right: true },
+
+  { key: 'gross_margin_q', label: '毛利率(單季)%', right: true },
+  { key: 'gross_margin', label: '毛利率(累計)%', right: true },
+  { key: 'op_margin_q', label: '營業利益率(單季)%', right: true },
+  { key: 'op_margin', label: '營業利益率(累計)%', right: true },
+  { key: 'net_margin_q', label: '稅後淨利率(單季)%', right: true },
+  { key: 'net_margin', label: '稅後淨利率(累計)%', right: true },
+
+  { key: 'rev_yoy', label: '營收成長率(單季年增)%', right: true },
+  { key: 'op_yoy', label: '營業利益成長率(單季年增)%', right: true },
+  { key: 'ni_yoy', label: '稅後淨利成長率(單季年增)%', right: true },
+
+  { key: 'roe_ttm', label: 'ROE(近四季)%', right: true },
+  { key: 'roe', label: 'ROE(累計年化)%', right: true },
+  { key: 'roa_ttm', label: 'ROA(近四季)%', right: true },
+  { key: 'roa', label: 'ROA(累計年化)%', right: true },
+  { key: 'debt_ratio', label: '負債比(當期)%', right: true },
+  { key: 'current_ratio', label: '流動比(當期)%', right: true },
+  { key: 'eps', label: 'EPS(單季)', right: true },
+  { key: 'eps_ttm', label: 'EPS(近四季)', right: true },
+  { key: 'bvps', label: '每股淨值(當期)', right: true },
+
+  { key: 'ttm_yield', label: '年化殖利率(近12月)%', right: true },
+  { key: 'ttm_cash', label: '現金股利(近12月)', right: true },
+  { key: 'yield5', label: '均殖利率(5年均利÷現價)%', right: true },
+  { key: 'yield10', label: '均殖利率(10年均利÷現價)%', right: true },
   { key: 'streak', label: '連續配息(年)', right: true },
-  { key: 'hy5', label: '5年歷史殖(%)', right: true },
-  { key: 'hy10', label: '10年歷史殖(%)', right: true },
-  { key: 'hy5_min', label: '5年最低殖(%)', right: true },
-  { key: 'avg_div5', label: '5年均股利', right: true },
-  { key: 'min_per5', label: '5年最低PER', right: true },
-  { key: 'cheap_div', label: '便宜價(股利)', right: true },
-  { key: 'cheap_per', label: '便宜價(本益比)', right: true },
-  { key: 'cheap_pbr', label: '便宜價(淨值)', right: true },
-  { key: 'current_ratio', label: '流動比(%)', right: true },
-  { key: 'roa', label: 'ROA(%)', right: true },
-  { key: 'director_pct', label: '董監持股(%)', right: true },
-  { key: 'pledge_pct', label: '董監設質(%)', right: true },
-  { key: 'manager_pct', label: '經理人持股(%)', right: true },
-  { key: 'major_pct', label: '大股東持股(%)', right: true },
+  { key: 'hy5', label: '歷史殖利率(5年)%', right: true },
+  { key: 'hy10', label: '歷史殖利率(10年)%', right: true },
+  { key: 'hy5_min', label: '最低殖利率(5年)%', right: true },
+  { key: 'avg_div5', label: '現金股利(5年均)', right: true },
+  { key: 'min_per5', label: '最低本益比(5年)', right: true },
+
+  { key: 'cheap_div', label: '便宜價(股利法)', right: true },
+  { key: 'cheap_per', label: '便宜價(本益比法)', right: true },
+  { key: 'cheap_pbr', label: '便宜價(淨值法)', right: true },
+
+  { key: 'director_pct', label: '董監持股(當期)%', right: true },
+  { key: 'pledge_pct', label: '董監設質(當期)%', right: true },
+  { key: 'manager_pct', label: '經理人持股(當期)%', right: true },
+  { key: 'major_pct', label: '大股東持股(當期)%', right: true },
+
   { key: null, label: '財報期別' },
 ];
 
 function Row({ r }: { r: ScreenerRow }) {
+  const n = (v: string | null, d = 2) => (
+    <td className="px-2 py-1 text-right tabular-nums">{fmt(v, d)}</td>
+  );
+  const nb = (v: string | null, d = 2) => (
+    <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(v, d)}</td>
+  );
   return (
     <tr className="border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60">
       <td className="px-2 py-1 font-mono">{r.stock_id}</td>
@@ -159,39 +191,56 @@ function Row({ r }: { r: ScreenerRow }) {
         {MARKET_LABEL[r.market] ?? r.market}
       </td>
       <td className="px-2 py-1 whitespace-nowrap text-zinc-500">{r.industry_category ?? dash}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.close, 2)}</td>
+
+      {nb(r.close)}
       <td className="px-2 py-1 text-right tabular-nums">{lots(r.volume)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{scaled(r.turnover, 1000)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.dividend_yield, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.per, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.pbr, 2)}</td>
+      {n(r.dividend_yield)}
+      {n(r.per)}
+      {n(r.pbr)}
       <td className="px-2 py-1 text-right tabular-nums">{scaled(r.capital, 1e6)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.gross_margin, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.op_margin, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.net_margin, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.roe, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.debt_ratio, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.eps, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.bvps, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.ttm_yield, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.ttm_cash, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.yield5, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.yield10, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.streak, 0)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.hy5, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.hy10, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.hy5_min, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.avg_div5, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.min_per5, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.cheap_div, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.cheap_per, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.cheap_pbr, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.current_ratio, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.roa, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.director_pct, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.pledge_pct, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.manager_pct, 2)}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.major_pct, 2)}</td>
+
+      {n(r.gross_margin_q)}
+      {nb(r.gross_margin)}
+      {n(r.op_margin_q)}
+      {nb(r.op_margin)}
+      {n(r.net_margin_q)}
+      {nb(r.net_margin)}
+
+      {n(r.rev_yoy)}
+      {n(r.op_yoy)}
+      {n(r.ni_yoy)}
+
+      {nb(r.roe_ttm)}
+      {n(r.roe)}
+      {n(r.roa_ttm)}
+      {n(r.roa)}
+      {n(r.debt_ratio)}
+      {n(r.current_ratio)}
+      {n(r.eps)}
+      {nb(r.eps_ttm)}
+      {n(r.bvps)}
+
+      {nb(r.ttm_yield)}
+      {n(r.ttm_cash)}
+      {n(r.yield5)}
+      {n(r.yield10)}
+      {n(r.streak, 0)}
+      {nb(r.hy5)}
+      {n(r.hy10)}
+      {n(r.hy5_min)}
+      {n(r.avg_div5)}
+      {n(r.min_per5)}
+
+      {nb(r.cheap_div)}
+      {nb(r.cheap_per)}
+      {nb(r.cheap_pbr)}
+
+      {n(r.director_pct)}
+      {n(r.pledge_pct)}
+      {n(r.manager_pct)}
+      {n(r.major_pct)}
+
       <td className="px-2 py-1 whitespace-nowrap text-zinc-500">{r.period_end ?? dash}</td>
     </tr>
   );
@@ -487,7 +536,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[3900px] text-sm">
+            <table className="w-full min-w-[5200px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {COLUMNS.map((c) => (
