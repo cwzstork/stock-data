@@ -50,6 +50,25 @@ npm run sync -- --commit   # 實際寫入
 官方 open API 只提供「最新一個交易日」，不吃日期參數，所以這支腳本適合每日增量。
 歷史回補要另外走帶日期參數的舊版報表 API。
 
+### 每日自動同步
+
+`.github/workflows/sync.yml` 每個交易日 18:00（台北）跑一次，也可以在 Actions 分頁手動觸發。
+
+需要在 repo 的 Settings → Secrets and variables → Actions 設兩個 secret：
+
+| Secret | 值 |
+|---|---|
+| `DATABASE_URL` | Neon 的 pooled 連線字串 |
+| `FINMIND_TOKEN` | FinMind token |
+
+`DIRECT_URL` 不用設——那是 migrate 才要的，`prisma generate` 不需要連資料庫。
+
+幾個已知行為：
+
+- GitHub 的排程常誤點十幾分鐘到半小時，這個用途不需要精準
+- 遇到休市日照跑，但同步是 upsert，只會把同一天的資料重寫一次，不會壞
+- **公開 repo 超過 60 天沒有新 commit，GitHub 會自動停用排程**，要進 Actions 分頁手動重新啟用
+
 ## 部署到 Vercel
 
 1. <https://vercel.com/new> → 匯入這個 GitHub repo，框架會自動偵測為 Next.js
