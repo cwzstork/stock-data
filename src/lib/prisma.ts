@@ -27,7 +27,15 @@ function getClient(): PrismaClient {
     throw new Error('DATABASE_URL 未設定（本機看 .env，雲端看平台的環境變數）');
   }
 
-  client = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  client = new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString,
+      // pg 的預設是 max: 10。serverless 會同時起很多實例，每個都留 10 條閒置連線沒有意義。
+      // 但也不能設 1——單一頁面就會同時發數個查詢，太小反而會排隊。
+      max: 5,
+      idleTimeoutMillis: 10_000,
+    }),
+  });
   if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = client;
   return client;
 }

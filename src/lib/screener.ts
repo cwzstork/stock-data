@@ -222,8 +222,11 @@ export interface ScreenerResult {
   pageCount: number;
 }
 
-export async function runScreener(f: Filters): Promise<ScreenerResult | null> {
-  const dates = await getTradeDates();
+/**
+ * dates 由呼叫端傳進來，不在這裡自己查。
+ * 頁面本來就要拿交易日清單來畫下拉選單，函式內再查一次等於每次開頁多繞新加坡一趟。
+ */
+export async function runScreener(f: Filters, dates: string[]): Promise<ScreenerResult | null> {
   if (dates.length === 0) return null;
   const tradeDate = f.date && dates.includes(f.date) ? f.date : dates[0];
 
@@ -249,8 +252,11 @@ export async function runScreener(f: Filters): Promise<ScreenerResult | null> {
 }
 
 /** 匯出用：不分頁，一次拿全部（上限保護避免誤操作拉爆記憶體） */
-export async function runScreenerForExport(f: Filters, limit = 10_000): Promise<ScreenerRow[]> {
-  const dates = await getTradeDates();
+export async function runScreenerForExport(
+  f: Filters,
+  dates: string[],
+  limit = 10_000,
+): Promise<ScreenerRow[]> {
   if (dates.length === 0) return [];
   const tradeDate = f.date && dates.includes(f.date) ? f.date : dates[0];
   const where = buildWhere(f, tradeDate);

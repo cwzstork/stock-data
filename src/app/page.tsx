@@ -148,11 +148,9 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
   const params = (await searchParams) as RawParams;
   const f = parseFilters(params);
 
-  const [result, industries, dates] = await Promise.all([
-    runScreener(f),
-    getIndustries(),
-    getTradeDates(),
-  ]);
+  // 交易日清單只查一次：下拉選單要用，runScreener 決定基準日也要用
+  const dates = await getTradeDates();
+  const [result, industries] = await Promise.all([runScreener(f, dates), getIndustries()]);
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 py-6">

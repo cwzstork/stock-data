@@ -1,5 +1,11 @@
 import { NextRequest } from 'next/server';
-import { MARKET_LABEL, parseFilters, runScreenerForExport, type RawParams } from '@/lib/screener';
+import {
+  MARKET_LABEL,
+  getTradeDates,
+  parseFilters,
+  runScreenerForExport,
+  type RawParams,
+} from '@/lib/screener';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +43,7 @@ export async function GET(req: NextRequest) {
   }
 
   const f = parseFilters(params);
-  const rows = await runScreenerForExport(f);
+  const rows = await runScreenerForExport(f, await getTradeDates());
 
   const lines = [HEADERS.join(',')];
   for (const r of rows) {
