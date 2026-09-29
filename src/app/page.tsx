@@ -195,10 +195,17 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 py-6">
       <header className="mb-4">
-        <div className="flex flex-wrap items-baseline gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-semibold">台股篩選器</h1>
-          <Link href="/live" className="text-sm text-zinc-500 hover:underline">
-            即時報價 →
+          <Link
+            href="/live"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-amber-600"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+            </span>
+            即時報價
           </Link>
         </div>
         <p className="mt-1 text-sm text-zinc-500">

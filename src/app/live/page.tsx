@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import StockPicker from '@/components/StockPicker';
 import { fetchLiveQuotes, type LiveQuote } from '@/lib/live';
 import { MARKET_LABEL } from '@/lib/screener';
 import { prisma } from '@/lib/prisma';
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 /** 一次查太多會拖慢頁面，也對證交所不禮貌 */
 const MAX = 60;
-const DEFAULT_LIST = '2330,2317,2454,2412,2881,0050,0056,00878';
+const DEFAULT_QUERY = '台積電 鴻海 中華電 高股息';
 
 const dash = <span className="text-zinc-400 dark:text-zinc-600">—</span>;
 
@@ -28,27 +29,92 @@ const SOURCE_LABEL: Record<LiveQuote['priceSource'], string> = {
   prevClose: '昨收',
 };
 
-export default async function LivePage({ searchParams }: PageProps<'/live'>) {
-  const params = (await searchParams) as Record<string, string | string[] | undefined>;
-  const raw = (Array.isArray(params.ids) ? params.ids[0] : params.ids) ?? DEFAULT_LIST;
+interface Matched {
+  stock_id: string;
+  stock_name: string;
+  market: string;
+  /** 是被哪個關鍵字找到的，用來回報哪些字沒找到東西 */
+  term: string;
+  rank: number;
+}
 
-  const ids = [...new Set(raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean))].slice(0, MAX);
+/**
+ * 把使用者輸入的關鍵字解析成股票。
+ *
+ * 一個關鍵字可以是股號（2330）、股號開頭（233）、或股名的一部分（台積、高股息）。
+ * 中文名稱用 ILIKE 做包含比對——台股股名很短，前綴比對會漏掉
+ * 「元大高股息」這種要用中間字找的情況。
+ *
+ * 排序刻意分三級：完全等於股號的一定排最前面，否則搜「2330」時
+ * 會被一堆股名含「2330」的雜訊蓋過（雖然少見，但排序要可預期）。
+ */
+async function resolveFuzzy(terms: string[]): Promise<Matched[]> {
+  if (terms.length === 0) return [];
+  return prisma.$queryRawUnsafe<Matched[]>(
+    `SELECT DISTINCT ON (s.stock_id)
+            s.stock_id, s.stock_name, s.market, t.term,
+            CASE WHEN s.stock_id = t.term THEN 0
+                 WHEN s.stock_id LIKE t.term || '%' THEN 1
+                 WHEN s.stock_name ILIKE t.term || '%' THEN 2
+                 ELSE 3 END AS rank
+       FROM stock s
+       JOIN unnest($1::text[]) AS t(term)
+         ON s.stock_id = t.term
+         OR s.stock_id LIKE t.term || '%'
+         OR s.stock_name ILIKE '%' || t.term || '%'
+      ORDER BY s.stock_id, rank`,
+    terms,
+  );
+}
 
-  // market 決定 MIS 的頻道前綴（tse / otc），弄錯就查不到
-  const known = await prisma.$queryRawUnsafe<{ stock_id: string; market: string }[]>(
-    `SELECT stock_id, market FROM stock WHERE stock_id = ANY($1::text[])`,
+/**
+ * 從多選器送來的是明確選取的股號，一定要用完全相等比對。
+ *
+ * 不能重用模糊比對：選了 2881 富邦金，前綴比對會把 2881A / 2881B / 2881C
+ * 這些特別股一起拉進來，使用者明明只點了一檔卻跑出四檔。
+ */
+async function resolveExact(ids: string[]): Promise<Matched[]> {
+  if (ids.length === 0) return [];
+  return prisma.$queryRawUnsafe<Matched[]>(
+    `SELECT s.stock_id, s.stock_name, s.market, s.stock_id AS term, 0 AS rank
+       FROM stock s
+      WHERE s.stock_id = ANY($1::text[])
+      ORDER BY s.stock_id`,
     ids,
   );
-  const marketOf = new Map(known.map((k) => [k.stock_id, k.market]));
-  const missing = ids.filter((id) => !marketOf.has(id));
+}
+
+export default async function LivePage({ searchParams }: PageProps<'/live'>) {
+  const params = (await searchParams) as Record<string, string | string[] | undefined>;
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  // ids 是多選器送出的明確選取；q 是直接打在網址上的自由文字，保留給分享連結用
+  const idsParam = one(params.ids);
+  const qParam = one(params.q);
+  const raw = qParam ?? idsParam ?? DEFAULT_QUERY;
+
+  // 逗號、全形逗號、頓號、空白都當分隔
+  const terms = [...new Set(raw.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean))];
+
+  const matched =
+    qParam === undefined && idsParam !== undefined
+      ? await resolveExact(terms)
+      : await resolveFuzzy(terms);
+  // rank 小的優先，同 rank 依股號；超過上限就截斷並提示
+  matched.sort((a, b) => a.rank - b.rank || a.stock_id.localeCompare(b.stock_id));
+  const picked = matched.slice(0, MAX);
+  const truncated = matched.length - picked.length;
+
+  const hitTerms = new Set(matched.map((m) => m.term));
+  const missTerms = terms.filter((t) => !hitTerms.has(t));
+
+  const nameOf = new Map(picked.map((m) => [m.stock_id, m.stock_name]));
+  const marketOf = new Map(picked.map((m) => [m.stock_id, m.market]));
 
   let quotes: LiveQuote[] = [];
   let error: string | null = null;
-  if (marketOf.size > 0) {
+  if (picked.length > 0) {
     try {
-      quotes = await fetchLiveQuotes(
-        ids.filter((id) => marketOf.has(id)).map((id) => ({ stockId: id, market: marketOf.get(id)! })),
-      );
+      quotes = await fetchLiveQuotes(picked.map((m) => ({ stockId: m.stock_id, market: m.market })));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -73,40 +139,46 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
         </Link>
       </header>
 
-      <form method="get" className="mb-4 flex flex-wrap items-center gap-2">
-        <input
-          name="ids"
-          defaultValue={raw}
-          placeholder="股號，逗號或空白分隔"
-          className="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
+      <form method="get" className="mb-2 flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <StockPicker name="ids" initial={picked} max={MAX} />
+        </div>
         <button
           type="submit"
-          className="rounded bg-zinc-900 px-4 py-1.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="rounded bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900"
         >
           查詢
         </button>
-        <span className="text-xs text-zinc-400">最多 {MAX} 檔</span>
       </form>
+      <p className="mb-4 text-xs text-zinc-400">
+        打中文的一部分就會跳候選：<strong>台</strong> → 台泥、台積電、台光電…，點一下加入。
+        股號也可以（打 <strong>233</strong> 或 <strong>00878</strong>）。
+        ↑↓ 選、Enter 加入、輸入框空的時候按倒退鍵移除最後一個。最多 {MAX} 檔。
+      </p>
 
       {error && (
         <p className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm dark:border-red-800 dark:bg-red-950">
           {error}
         </p>
       )}
-      {missing.length > 0 && (
-        <p className="mb-4 text-sm text-amber-700 dark:text-amber-500">
-          主檔裡沒有這些代號，已略過：{missing.join('、')}
+      {missTerms.length > 0 && (
+        <p className="mb-3 text-sm text-amber-700 dark:text-amber-500">
+          找不到符合的股票：{missTerms.join('、')}
+        </p>
+      )}
+      {truncated > 0 && (
+        <p className="mb-3 text-sm text-amber-700 dark:text-amber-500">
+          共找到 {matched.length} 檔，只顯示前 {MAX} 檔。關鍵字再精確一點可以少一些。
         </p>
       )}
 
       {quotes.length > 0 && (
         <>
           <p className="mb-2 text-sm text-zinc-500">
-            {asOfDate} {asOf} 報價
+            {asOfDate} {asOf} 報價，共 {quotes.length} 檔
           </p>
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[820px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {['股號', '股名', '市場', '價格', '來源', '漲跌', '漲跌幅', '開', '高', '低', '昨收', '量(張)'].map(
@@ -125,7 +197,8 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
                     className="border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60"
                   >
                     <td className="px-2 py-1 font-mono">{q.stockId}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{q.name}</td>
+                    {/* MIS 回傳的名稱偶爾是簡稱或空白，主檔的比較一致 */}
+                    <td className="px-2 py-1 whitespace-nowrap">{nameOf.get(q.stockId) ?? q.name}</td>
                     <td className="px-2 py-1 text-zinc-500">
                       {MARKET_LABEL[marketOf.get(q.stockId) ?? ''] ?? ''}
                     </td>
