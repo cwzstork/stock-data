@@ -119,14 +119,29 @@ function sortHref(params: RawParams, f: Filters, key: SortKey) {
  *   (當期)   財報期末的時點數，不能加總
  *   (5年)    近 5 個完整年度
  */
-function buildColumns(ytdMonths: number | null): {
+/**
+ * 欄位標籤依實際資料的期別動態產生。
+ *
+ * 寫死「累計」「當期」使用者無從得知涵蓋多久，而且那兩個詞在不同欄位
+ * 指的還是不同東西——負債比是財報期末、董監持股是公告月、股本是公告日，
+ * 三者日期都不一樣。所以一律把實際日期寫進欄位名。
+ */
+function buildColumns(p: {
+  ytdMonths: number | null;
+  quarterEnd: string | null;
+  capitalDate: string | null;
+  insiderDate: string | null;
+}): {
   key: SortKey | null;
   label: string;
   right?: boolean;
 }[] {
-  // 累計的長度隨季別變動：Q1 是 3 個月、Q2 是 6 個月、Q3 是 9、Q4 是 12。
-  // 寫死「累計」使用者無從得知涵蓋多久，所以依當期季別動態標出月數。
-  const ytd = ytdMonths ? `累計${ytdMonths}個月` : '累計';
+  // 累計的長度隨季別變動：Q1 是 3 個月、Q2 是 6 個月、Q3 是 9、Q4 是 12
+  const ytd = p.ytdMonths ? `累計${p.ytdMonths}個月` : '累計';
+  // 財報期末給到日，股本公告給到日，內部人持股只到月（資料本身就是月報）
+  const qe = p.quarterEnd ?? '財報期末';
+  const cap = p.capitalDate ?? '公告日';
+  const ins = p.insiderDate ? p.insiderDate.slice(0, 7) : '公告月';
   return [
   { key: 'stock_id', label: '股號' },
   { key: null, label: '股名' },
@@ -139,7 +154,7 @@ function buildColumns(ytdMonths: number | null): {
   { key: 'dividend_yield', label: '殖利率(當日,交易所)%', right: true },
   { key: 'per', label: '本益比(當日,近四季)', right: true },
   { key: 'pbr', label: '股價淨值比(當日)', right: true },
-  { key: 'capital', label: '股本(公告日,百萬)', right: true },
+  { key: 'capital', label: `股本(${cap},百萬)`, right: true },
 
   { key: 'gross_margin_q', label: '毛利率(單季3個月)%', right: true },
   { key: 'gross_margin', label: `毛利率(${ytd})%`, right: true },
@@ -156,11 +171,11 @@ function buildColumns(ytdMonths: number | null): {
   { key: 'roe', label: `ROE(${ytd}年化)%`, right: true },
   { key: 'roa_ttm', label: 'ROA(近四季12個月)%', right: true },
   { key: 'roa', label: `ROA(${ytd}年化)%`, right: true },
-  { key: 'debt_ratio', label: '負債比(財報期末)%', right: true },
-  { key: 'current_ratio', label: '流動比(財報期末)%', right: true },
+  { key: 'debt_ratio', label: `負債比(${qe})%`, right: true },
+  { key: 'current_ratio', label: `流動比(${qe})%`, right: true },
   { key: 'eps', label: 'EPS(單季3個月)', right: true },
   { key: 'eps_ttm', label: 'EPS(近四季12個月)', right: true },
-  { key: 'bvps', label: '每股淨值(財報期末)', right: true },
+  { key: 'bvps', label: `每股淨值(${qe})`, right: true },
 
   { key: 'ttm_yield', label: '年化殖利率(近12月)%', right: true },
   { key: 'ttm_cash', label: '現金股利(近12月)', right: true },
@@ -177,10 +192,10 @@ function buildColumns(ytdMonths: number | null): {
   { key: 'cheap_per', label: '便宜價(本益比法)', right: true },
   { key: 'cheap_pbr', label: '便宜價(淨值法)', right: true },
 
-  { key: 'director_pct', label: '董監持股(公告月)%', right: true },
-  { key: 'pledge_pct', label: '董監設質(公告月)%', right: true },
-  { key: 'manager_pct', label: '經理人持股(公告月)%', right: true },
-  { key: 'major_pct', label: '大股東持股(公告月)%', right: true },
+  { key: 'director_pct', label: `董監持股(${ins})%`, right: true },
+  { key: 'pledge_pct', label: `董監設質(${ins})%`, right: true },
+  { key: 'manager_pct', label: `經理人持股(${ins})%`, right: true },
+  { key: 'major_pct', label: `大股東持股(${ins})%`, right: true },
 
     { key: null, label: '財報期別' },
   ];
@@ -293,7 +308,12 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
   ]);
   const period = result ? await getPeriodInfo(result.tradeDate) : null;
   const ytdMonths = period?.quarter ? period.quarter * 3 : null;
-  const COLUMNS = buildColumns(ytdMonths);
+  const COLUMNS = buildColumns({
+    ytdMonths,
+    quarterEnd: period?.quarterEnd ?? null,
+    capitalDate: period?.capitalDate ?? null,
+    insiderDate: period?.insiderDate ?? null,
+  });
 
   // 目前畫面上的條件，原樣拿來存或分享
   const currentQuery = withParams(params, []);
