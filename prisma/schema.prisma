@@ -28,6 +28,7 @@ model Stock {
   capital   StockCapital[]
   quarterly StockQuarterly[]
   dividend  StockDividend[]
+  annual    StockAnnual[]
 
   @@index([market])
   @@index([industry])
@@ -189,4 +190,40 @@ model SavedFilter {
 
   @@index([createdAt])
   @@map("saved_filter")
+}
+
+/// 年度彙總。
+///
+/// 為什麼不存十年日頻明細：
+///   3,081 檔 × 每年約 245 個交易日 × 10 年 ≈ 690 萬列，含索引超過 1 GB，
+///   直接撞爆 Neon 免費層的 0.5 GB。
+///   而實際要用的「歷史殖利率」「近 N 年最低本益比」「歷史高低點」
+///   全部只需要年度層級的數字——30,810 列、約 5 MB，兩百分之一。
+///   日頻明細另外以 Parquet 外存，要畫走勢圖或回測時再載入。
+model StockAnnual {
+  stockId String @map("stock_id") @db.VarChar(10)
+  year    Int
+
+  /// 年均收盤價。算歷史殖利率的分母用這個，不是年末價
+  avgClose  Decimal? @map("avg_close") @db.Decimal(14, 4)
+  high      Decimal? @db.Decimal(14, 4)
+  low       Decimal? @db.Decimal(14, 4)
+  /// 年末最後一個交易日收盤
+  lastClose Decimal? @map("last_close") @db.Decimal(14, 4)
+  /// 該年有成交的交易日數。用來判斷這一年的資料完不完整
+  days      Int
+
+  /// 以下來自 TaiwanStockPER，ETF 與興櫃不公告，會是空的
+  avgPer   Decimal? @map("avg_per") @db.Decimal(10, 2)
+  minPer   Decimal? @map("min_per") @db.Decimal(10, 2)
+  avgPbr   Decimal? @map("avg_pbr") @db.Decimal(10, 2)
+  minPbr   Decimal? @map("min_pbr") @db.Decimal(10, 2)
+  avgYield Decimal? @map("avg_yield") @db.Decimal(8, 4)
+  maxYield Decimal? @map("max_yield") @db.Decimal(8, 4)
+
+  stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
+
+  @@id([stockId, year])
+  @@index([year])
+  @@map("stock_annual")
 }

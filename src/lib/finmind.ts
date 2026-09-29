@@ -134,3 +134,35 @@ export async function fetchDividends(
     start_date: startDate,
   });
 }
+
+export interface PriceRow {
+  date: string;
+  stock_id: string;
+  Trading_Volume: number;
+  Trading_money: number;
+  open: number;
+  max: number;
+  min: number;
+  close: number;
+}
+
+/** 個股日頻價量（逐檔）。一次呼叫就拿到十年，約 2,900 筆 / 500KB。 */
+export async function fetchPriceHistory(stockId: string, startDate: string): Promise<PriceRow[]> {
+  return request<PriceRow>('TaiwanStockPrice', { data_id: stockId, start_date: startDate });
+}
+
+export interface PerRow {
+  date: string;
+  stock_id: string;
+  dividend_yield: number | null;
+  PER: number | null;
+  PBR: number | null;
+}
+
+/**
+ * 個股日頻評價（逐檔）。
+ * ETF 與興櫃交易所不公告，這支會回空陣列。
+ */
+export async function fetchPerHistory(stockId: string, startDate: string): Promise<PerRow[]> {
+  return request<PerRow>('TaiwanStockPER', { data_id: stockId, start_date: startDate });
+}

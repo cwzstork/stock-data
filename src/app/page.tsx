@@ -133,6 +133,9 @@ const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'yield5', label: '5年均殖(%)', right: true },
   { key: 'yield10', label: '10年均殖(%)', right: true },
   { key: 'streak', label: '連續配息(年)', right: true },
+  { key: 'hy5', label: '5年歷史殖(%)', right: true },
+  { key: 'hy10', label: '10年歷史殖(%)', right: true },
+  { key: 'min_per5', label: '5年最低PER', right: true },
   { key: null, label: '財報期別' },
 ];
 
@@ -164,6 +167,9 @@ function Row({ r }: { r: ScreenerRow }) {
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.yield5, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.yield10, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.streak, 0)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.hy5, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.hy10, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.min_per5, 2)}</td>
       <td className="px-2 py-1 whitespace-nowrap text-zinc-500">{r.period_end ?? dash}</td>
     </tr>
   );
@@ -189,7 +195,12 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 py-6">
       <header className="mb-4">
-        <h1 className="text-xl font-semibold">台股篩選器</h1>
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h1 className="text-xl font-semibold">台股篩選器</h1>
+          <Link href="/live" className="text-sm text-zinc-500 hover:underline">
+            即時報價 →
+          </Link>
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           條件都在網址裡，可以加書籤或分享——每次打開都是用當下的資料重跑一次，不會拿到過期的清單。
         </p>
@@ -306,6 +317,21 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
               placeholder="例：5" className={inputCls} />
           </Field>
 
+          <Field label="5年歷史殖下限 (%)">
+            <input type="number" step="any" name="hy5Min" defaultValue={f.hy5Min ?? ''}
+              placeholder="例：4" className={inputCls} />
+          </Field>
+
+          <Field label="10年歷史殖下限 (%)">
+            <input type="number" step="any" name="hy10Min" defaultValue={f.hy10Min ?? ''}
+              placeholder="例：4" className={inputCls} />
+          </Field>
+
+          <Field label="5年最低PER 上限">
+            <input type="number" step="any" name="minPer5Max" defaultValue={f.minPer5Max ?? ''}
+              placeholder="例：12" className={inputCls} />
+          </Field>
+
           <Field label="負債比上限 (%)">
             <input
               type="number"
@@ -407,7 +433,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[2300px] text-sm">
+            <table className="w-full min-w-[2700px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {COLUMNS.map((c) => (
@@ -466,7 +492,10 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
             <br />
             殖利率有兩欄：「殖利率」是交易所公告值（<strong>不含 ETF</strong>，除息後還有更新延遲）；
             「年化殖利率」是我們用逐筆配息紀錄自己算的近 12 個月合計，ETF 也有。
-            5年／10年均殖 = 近 N 個<strong>完整年度</strong>的平均現金股利 ÷ 基準日收盤價。
+            5年／10年<strong>均殖</strong> = 近 N 個完整年度的平均現金股利 ÷ <strong>基準日</strong>收盤價，
+            問的是「用今天的價格買，領過去的平均股利有多少報酬」。
+            5年／10年<strong>歷史殖</strong> = 每年股利 ÷ <strong>當年均價</strong>再平均，
+            問的是「過去這幾年買的人平均領到多少」。那一年沒配息就算 0%。
             <br />
             財報是<strong>累計數</strong>：EPS 與各項比率的分子都是年初至該季，
             ROE 已乘以 4/季別年化以便比較。財報只取交易日之前已公告的期別，不會用到未來資料。

@@ -36,6 +36,10 @@ const HEADERS = [
   '5年均殖(%)',
   '10年均殖(%)',
   '連續配息(年)',
+  '5年歷史殖(%)',
+  '10年歷史殖(%)',
+  '5年最低PER',
+  '5年最低價',
 ];
 
 /** CSV 逃脫：含逗號、引號或換行就要包起來，引號自身要加倍 */
@@ -90,6 +94,10 @@ export async function GET(req: NextRequest) {
         cell(r.yield5),
         cell(r.yield10),
         cell(r.streak),
+        cell(r.hy5),
+        cell(r.hy10),
+        cell(r.min_per5),
+        cell(r.low5),
       ].join(','),
     );
   }

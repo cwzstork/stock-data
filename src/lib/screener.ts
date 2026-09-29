@@ -50,6 +50,12 @@ export interface Filters {
   y10Min: number | null;
   /** 連續配息年數下限 */
   streakMin: number | null;
+  /** 5 年歷史平均殖利率下限(%) */
+  hy5Min: number | null;
+  /** 10 年歷史平均殖利率下限(%) */
+  hy10Min: number | null;
+  /** 近 5 年最低本益比上限 */
+  minPer5Max: number | null;
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -109,6 +115,9 @@ const SORT_COLUMNS = {
   yield5: 'CASE WHEN d.close > 0 THEN dy.avg5 * 100.0 / d.close END',
   yield10: 'CASE WHEN d.close > 0 THEN dy.avg10 * 100.0 / d.close END',
   streak: 'dy.streak',
+  hy5: 'an.hy5',
+  hy10: 'an.hy10',
+  min_per5: 'an.min_per5',
 } as const;
 
 export type SortKey = keyof typeof SORT_COLUMNS;
@@ -172,6 +181,9 @@ export function parseFilters(params: RawParams): Filters {
     y5Min: toNumber(toStr(params.y5Min)),
     y10Min: toNumber(toStr(params.y10Min)),
     streakMin: toNumber(toStr(params.streakMin)),
+    hy5Min: toNumber(toStr(params.hy5Min)),
+    hy10Min: toNumber(toStr(params.hy10Min)),
+    minPer5Max: toNumber(toStr(params.minPer5Max)),
     sort,
     dir: toStr(params.dir) === 'asc' ? 'asc' : 'desc',
     page: Math.max(1, toNumber(toStr(params.page)) ?? 1),
@@ -207,6 +219,10 @@ export interface ScreenerRow {
   yield5: string | null;
   yield10: string | null;
   streak: string | null;
+  hy5: string | null;
+  hy10: string | null;
+  min_per5: string | null;
+  low5: string | null;
 }
 
 /**
@@ -293,6 +309,40 @@ const DIVIDEND_LATERAL = `
      GROUP BY yr_base
   ) dy ON true`;
 
+/**
+ * 年度彙總衍生值。
+ *
+ * 歷史殖利率＝當年配發的現金股利 ÷ 當年均價，再把各年平均起來。
+ * 這才是嚴格定義的歷史殖利率——跟「平均股利 ÷ 今天的價格」是兩件事：
+ *   前者問「過去這幾年買這檔的人平均領到多少報酬」
+ *   後者問「用今天的價格買進，領過去的平均股利會有多少報酬」
+ * 兩個都有用，所以畫面上兩欄都留。
+ *
+ * 那一年沒配息就是 0%，不能只平均有配的年份——只算有配的會高估。
+ */
+const ANNUAL_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT avg(hist_yield) FILTER (WHERE year > yr_base - 5)  AS hy5,
+           avg(hist_yield) FILTER (WHERE year > yr_base - 10) AS hy10,
+           min(min_per)    FILTER (WHERE year > yr_base - 5)  AS min_per5,
+           min(low)        FILTER (WHERE year > yr_base - 5)  AS low5
+      FROM (
+        SELECT a.year, a.min_per, a.low,
+               extract(year from d.trade_date)::int - 1 AS yr_base,
+               CASE WHEN a.avg_close > 0
+                    THEN coalesce(dd.cash, 0) * 100.0 / a.avg_close END AS hist_yield
+          FROM stock_annual a
+          LEFT JOIN LATERAL (
+            SELECT sum(v.cash) AS cash
+              FROM stock_dividend v
+             WHERE v.stock_id = a.stock_id
+               AND extract(year from v.ex_date)::int = a.year
+          ) dd ON true
+         WHERE a.stock_id = d.stock_id
+           AND a.year <= extract(year from d.trade_date)::int - 1
+      ) t
+  ) an ON true`;
+
 interface Where {
   sql: string;
   values: unknown[];
@@ -344,6 +394,9 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.y5Min !== null) add(`(${RATIO.yield5}) >= ?`, f.y5Min);
   if (f.y10Min !== null) add(`(${RATIO.yield10}) >= ?`, f.y10Min);
   if (f.streakMin !== null) add('dy.streak >= ?', f.streakMin);
+  if (f.hy5Min !== null) add('an.hy5 >= ?', f.hy5Min);
+  if (f.hy10Min !== null) add('an.hy10 >= ?', f.hy10Min);
+  if (f.minPer5Max !== null) add('an.min_per5 <= ?', f.minPer5Max);
 
   return { sql: parts.join('\n     AND '), values };
 }
@@ -388,7 +441,11 @@ const SELECT_COLS = `
   dv.ttm_count::text                           AS ttm_count,
   round((${RATIO.yield5})::numeric, 2)::text   AS yield5,
   round((${RATIO.yield10})::numeric, 2)::text  AS yield10,
-  dy.streak::text                              AS streak`;
+  dy.streak::text                              AS streak,
+  round(an.hy5, 2)::text                       AS hy5,
+  round(an.hy10, 2)::text                      AS hy10,
+  an.min_per5::text                            AS min_per5,
+  an.low5::text                                AS low5`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
@@ -401,6 +458,7 @@ function baseQuery(where: Where, f: Filters) {
     ${CAPITAL_LATERAL}
     ${QUARTERLY_LATERAL}
     ${DIVIDEND_LATERAL}
+    ${ANNUAL_LATERAL}
    WHERE ${where.sql}
    ORDER BY ${SORT_COLUMNS[f.sort]} ${f.dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, s.stock_id ASC`;
 }
@@ -429,6 +487,7 @@ export async function runScreener(f: Filters, dates: string[]): Promise<Screener
     ${CAPITAL_LATERAL}
     ${QUARTERLY_LATERAL}
     ${DIVIDEND_LATERAL}
+    ${ANNUAL_LATERAL}
    WHERE ${where.sql}`;
   const [{ n: total }] = await prisma.$queryRawUnsafe<{ n: number }[]>(countSql, ...where.values);
 
