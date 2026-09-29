@@ -22,6 +22,14 @@ const HEADERS = [
   '本益比',
   '股價淨值比',
   '股本(百萬)',
+  '毛利率(%)',
+  '營益率(%)',
+  '淨利率(%)',
+  'ROE年化(%)',
+  '負債比(%)',
+  'EPS(累計)',
+  '每股淨值',
+  '財報期別',
 ];
 
 /** CSV 逃脫：含逗號、引號或換行就要包起來，引號自身要加倍 */
@@ -62,6 +70,14 @@ export async function GET(req: NextRequest) {
         cell(r.per),
         cell(r.pbr),
         cell(divide(r.capital, 1e6)),
+        cell(r.gross_margin),
+        cell(r.op_margin),
+        cell(r.net_margin),
+        cell(r.roe),
+        cell(r.debt_ratio),
+        cell(r.eps),
+        cell(r.bvps),
+        cell(r.period_end),
       ].join(','),
     );
   }

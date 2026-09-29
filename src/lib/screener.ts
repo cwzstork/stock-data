@@ -28,6 +28,19 @@ export interface Filters {
   /** 股本下限／上限，單位：百萬元 */
   capMin: number | null;
   capMax: number | null;
+  // ── 以下來自季頻財報 ──
+  gmMin: number | null;
+  gmMax: number | null;
+  omMin: number | null;
+  omMax: number | null;
+  nmMin: number | null;
+  nmMax: number | null;
+  roeMin: number | null;
+  roeMax: number | null;
+  epsMin: number | null;
+  epsMax: number | null;
+  /** 負債比上限(%) */
+  debtMax: number | null;
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -40,6 +53,24 @@ export const MARKET_LABEL: Record<string, string> = {
   emerging: '興櫃',
 };
 
+/**
+ * 財報衍生比率。SELECT 和 WHERE 共用同一份定義，兩邊各寫一次遲早會飄掉。
+ *
+ * ROE 做了年化：財報是累計數，Q2 的淨利只有半年，直接除權益會低估一半。
+ * 乘以 4/季別換算成年度基準，才能跟「ROE > 15%」這種條件對得上。
+ * 這是近似——旺淡季不均的公司會失真，等十年歷史補完會改用近四季。
+ */
+const RATIO = {
+  gross_margin: 'CASE WHEN q.revenue > 0 THEN q.gross_profit * 100.0 / q.revenue END',
+  op_margin: 'CASE WHEN q.revenue > 0 THEN q.operating_income * 100.0 / q.revenue END',
+  net_margin: 'CASE WHEN q.revenue > 0 THEN q.net_income_parent * 100.0 / q.revenue END',
+  debt_ratio: 'CASE WHEN q.total_assets > 0 THEN q.total_liabilities * 100.0 / q.total_assets END',
+  roe: `CASE WHEN q.equity_parent > 0
+          THEN q.net_income_parent * 100.0 / q.equity_parent
+               * (4.0 / EXTRACT(QUARTER FROM q.period_end))
+        END`,
+} as const;
+
 /** 允許排序的欄位。白名單是必要的——欄位名會直接拼進 SQL。 */
 const SORT_COLUMNS = {
   stock_id: 's.stock_id',
@@ -50,6 +81,13 @@ const SORT_COLUMNS = {
   per: 'd.per',
   pbr: 'd.pbr',
   capital: 'cap.capital',
+  gross_margin: RATIO.gross_margin,
+  op_margin: RATIO.op_margin,
+  net_margin: RATIO.net_margin,
+  debt_ratio: RATIO.debt_ratio,
+  roe: RATIO.roe,
+  eps: 'q.eps',
+  bvps: 'q.book_value_per_share',
 } as const;
 
 export type SortKey = keyof typeof SORT_COLUMNS;
@@ -97,6 +135,17 @@ export function parseFilters(params: RawParams): Filters {
     volMin: toNumber(toStr(params.volMin)),
     capMin: toNumber(toStr(params.capMin)),
     capMax: toNumber(toStr(params.capMax)),
+    gmMin: toNumber(toStr(params.gmMin)),
+    gmMax: toNumber(toStr(params.gmMax)),
+    omMin: toNumber(toStr(params.omMin)),
+    omMax: toNumber(toStr(params.omMax)),
+    nmMin: toNumber(toStr(params.nmMin)),
+    nmMax: toNumber(toStr(params.nmMax)),
+    roeMin: toNumber(toStr(params.roeMin)),
+    roeMax: toNumber(toStr(params.roeMax)),
+    epsMin: toNumber(toStr(params.epsMin)),
+    epsMax: toNumber(toStr(params.epsMax)),
+    debtMax: toNumber(toStr(params.debtMax)),
     sort,
     dir: toStr(params.dir) === 'asc' ? 'asc' : 'desc',
     page: Math.max(1, toNumber(toStr(params.page)) ?? 1),
@@ -117,6 +166,15 @@ export interface ScreenerRow {
   per: string | null;
   pbr: string | null;
   capital: string | null;
+  /** 財報期別，null = 這檔沒有財報（ETF、興櫃等） */
+  period_end: string | null;
+  gross_margin: string | null;
+  op_margin: string | null;
+  net_margin: string | null;
+  debt_ratio: string | null;
+  roe: string | null;
+  eps: string | null;
+  bvps: string | null;
 }
 
 /**
@@ -137,6 +195,25 @@ const CAPITAL_LATERAL = `
      ORDER BY (k.report_date <= d.trade_date) DESC, abs(k.report_date - d.trade_date)
      LIMIT 1
   ) cap ON true`;
+
+/**
+ * 財報的時間對位，規則跟股本刻意不同。
+ *
+ * 股本可以往後找最接近的一筆，因為它只是「現況」；
+ * 財報不行——用交易日之後才公告的財報去篩，是看未來資料，
+ * 篩出來的結果在當下根本不可能知道。所以這裡嚴格只取 period_end <= 交易日。
+ *
+ * （嚴格說財報是季底後約 45 天才公告，這個近似仍然偏樂觀，
+ *   但對「看當下基本面」的用途夠用；真要回測才需要用公告日對位。）
+ */
+const QUARTERLY_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT *
+      FROM stock_quarterly qq
+     WHERE qq.stock_id = d.stock_id AND qq.period_end <= d.trade_date
+     ORDER BY qq.period_end DESC
+     LIMIT 1
+  ) q ON true`;
 
 interface Where {
   sql: string;
@@ -170,6 +247,19 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.capMin !== null) add('cap.capital >= ?', Math.round(f.capMin * 1e6));
   if (f.capMax !== null) add('cap.capital <= ?', Math.round(f.capMax * 1e6));
 
+  // 財報衍生條件。用跟 SELECT 同一份 RATIO 定義，兩邊各寫一次遲早會飄掉。
+  if (f.gmMin !== null) add(`(${RATIO.gross_margin}) >= ?`, f.gmMin);
+  if (f.gmMax !== null) add(`(${RATIO.gross_margin}) <= ?`, f.gmMax);
+  if (f.omMin !== null) add(`(${RATIO.op_margin}) >= ?`, f.omMin);
+  if (f.omMax !== null) add(`(${RATIO.op_margin}) <= ?`, f.omMax);
+  if (f.nmMin !== null) add(`(${RATIO.net_margin}) >= ?`, f.nmMin);
+  if (f.nmMax !== null) add(`(${RATIO.net_margin}) <= ?`, f.nmMax);
+  if (f.roeMin !== null) add(`(${RATIO.roe}) >= ?`, f.roeMin);
+  if (f.roeMax !== null) add(`(${RATIO.roe}) <= ?`, f.roeMax);
+  if (f.debtMax !== null) add(`(${RATIO.debt_ratio}) <= ?`, f.debtMax);
+  if (f.epsMin !== null) add('q.eps >= ?', f.epsMin);
+  if (f.epsMax !== null) add('q.eps <= ?', f.epsMax);
+
   return { sql: parts.join('\n     AND '), values };
 }
 
@@ -199,7 +289,15 @@ const SELECT_COLS = `
   d.dividend_yield::text AS dividend_yield,
   d.per::text            AS per,
   d.pbr::text            AS pbr,
-  cap.capital::text      AS capital`;
+  cap.capital::text      AS capital,
+  to_char(q.period_end, 'YYYY-MM-DD')          AS period_end,
+  round((${RATIO.gross_margin})::numeric, 2)::text AS gross_margin,
+  round((${RATIO.op_margin})::numeric, 2)::text    AS op_margin,
+  round((${RATIO.net_margin})::numeric, 2)::text   AS net_margin,
+  round((${RATIO.debt_ratio})::numeric, 2)::text   AS debt_ratio,
+  round((${RATIO.roe})::numeric, 2)::text          AS roe,
+  q.eps::text                                  AS eps,
+  q.book_value_per_share::text                 AS bvps`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
@@ -210,6 +308,7 @@ function baseQuery(where: Where, f: Filters) {
     FROM stock_daily d
     JOIN stock s ON s.stock_id = d.stock_id
     ${CAPITAL_LATERAL}
+    ${QUARTERLY_LATERAL}
    WHERE ${where.sql}
    ORDER BY ${SORT_COLUMNS[f.sort]} ${f.dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, s.stock_id ASC`;
 }
@@ -236,6 +335,7 @@ export async function runScreener(f: Filters, dates: string[]): Promise<Screener
     FROM stock_daily d
     JOIN stock s ON s.stock_id = d.stock_id
     ${CAPITAL_LATERAL}
+    ${QUARTERLY_LATERAL}
    WHERE ${where.sql}`;
   const [{ n: total }] = await prisma.$queryRawUnsafe<{ n: number }[]>(countSql, ...where.values);
 

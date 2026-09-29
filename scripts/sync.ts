@@ -1,5 +1,5 @@
 /**
- * 每日同步：股票主檔 + 當日行情 + 股本
+ * 每日同步：股票主檔 + 當日行情 + 股本 + 季頻財報
  *
  *   npm run sync               乾跑（預設）— 連得上資料庫、真的執行 SQL，但最後 rollback
  *   npm run sync -- --commit   實際寫入
@@ -10,6 +10,7 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { fetchStockInfo } from '../src/lib/finmind';
+import { fetchQuarterly, type QuarterlyRow } from '../src/lib/mops';
 import {
   fetchCompanyProfiles,
   fetchEmergingQuotes,
@@ -135,9 +136,55 @@ async function upsertCapital(
   return n;
 }
 
+async function upsertQuarterly(tx: Tx, rows: QuarterlyRow[]) {
+  let n = 0;
+  for (const part of chunks(rows)) {
+    const cols = columns(part, [
+      (r) => r.stockId,
+      (r) => r.periodEnd,
+      (r) => r.revenue,
+      (r) => r.grossProfit,
+      (r) => r.operatingIncome,
+      (r) => r.pretaxIncome,
+      (r) => r.netIncome,
+      (r) => r.netIncomeParent,
+      (r) => r.eps,
+      (r) => r.totalAssets,
+      (r) => r.totalLiabilities,
+      (r) => r.totalEquity,
+      (r) => r.equityParent,
+      (r) => r.bookValuePerShare,
+    ]);
+    n += await tx.$executeRawUnsafe(
+      `INSERT INTO stock_quarterly (
+         stock_id, period_end, revenue, gross_profit, operating_income, pretax_income,
+         net_income, net_income_parent, eps,
+         total_assets, total_liabilities, total_equity, equity_parent, book_value_per_share)
+       SELECT id, pe::date, rev::bigint, gp::bigint, oi::bigint, pti::bigint,
+              ni::bigint, nip::bigint, eps::numeric,
+              ta::bigint, tl::bigint, te::bigint, ep::bigint, bvps::numeric
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+                     $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[],
+                     $13::text[], $14::text[])
+              AS x(id, pe, rev, gp, oi, pti, ni, nip, eps, ta, tl, te, ep, bvps)
+       ON CONFLICT (stock_id, period_end) DO UPDATE SET
+         revenue = EXCLUDED.revenue, gross_profit = EXCLUDED.gross_profit,
+         operating_income = EXCLUDED.operating_income, pretax_income = EXCLUDED.pretax_income,
+         net_income = EXCLUDED.net_income, net_income_parent = EXCLUDED.net_income_parent,
+         eps = EXCLUDED.eps, total_assets = EXCLUDED.total_assets,
+         total_liabilities = EXCLUDED.total_liabilities, total_equity = EXCLUDED.total_equity,
+         equity_parent = EXCLUDED.equity_parent,
+         book_value_per_share = EXCLUDED.book_value_per_share`,
+      ...cols,
+    );
+  }
+  return n;
+}
+
 const COUNT_SQL = `SELECT 'stock' AS t, count(*) AS n FROM stock
    UNION ALL SELECT 'stock_daily', count(*) FROM stock_daily
-   UNION ALL SELECT 'stock_capital', count(*) FROM stock_capital`;
+   UNION ALL SELECT 'stock_capital', count(*) FROM stock_capital
+   UNION ALL SELECT 'stock_quarterly', count(*) FROM stock_quarterly`;
 
 async function main() {
   const t0 = Date.now();
@@ -145,9 +192,10 @@ async function main() {
 
   // ── 1. 抓資料 ───────────────────────────────────────────────
   console.log('[1/5] 抓取來源資料…');
-  const [info, profiles, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
+  const [info, profiles, quarterly, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
     fetchStockInfo(),
     fetchCompanyProfiles(),
+    fetchQuarterly(),
     fetchTwseQuotes(),
     fetchTwseValuation(),
     fetchTpexQuotes(),
@@ -159,6 +207,7 @@ async function main() {
   console.log(`  上市 行情/評價                 ${twseQ.length} / ${twseV.length}`);
   console.log(`  上櫃 行情/評價                 ${tpexQ.length} / ${tpexV.length}`);
   console.log(`  興櫃 行情                      ${esbQ.length}`);
+  console.log(`  季頻財報                       ${quarterly.length} 筆`);
 
   // ── 2. 合併行情與評價 ────────────────────────────────────────
   console.log('\n[2/5] 合併行情與評價…');
@@ -205,6 +254,15 @@ async function main() {
   console.log(`  資料庫既有最新股本             ${latestCapital.size} 檔`);
   console.log(`  股本有變動需寫入               ${capitalRows.length} 筆`);
 
+  // 財報有外鍵指向 stock，主檔沒有的（少數公開發行但未上市櫃）要濾掉
+  const quarterlyRows = quarterly.filter((q) => known.has(q.stockId));
+  const periods = [...new Set(quarterlyRows.map((q) => q.periodEnd))].sort();
+  console.log(`  季頻可寫入                     ${quarterlyRows.length} 筆（期別 ${periods.join(', ')}）`);
+  console.log(`  略過(主檔沒有)                 ${quarterly.length - quarterlyRows.length} 筆`);
+  console.log(`  其中有營收                     ${quarterlyRows.filter((q) => q.revenue != null).length} 筆`);
+  console.log(`  其中有毛利                     ${quarterlyRows.filter((q) => q.grossProfit != null).length} 筆`);
+  console.log(`  其中有權益                     ${quarterlyRows.filter((q) => q.equityParent != null).length} 筆`);
+
   // ── 4. 主檔 ─────────────────────────────────────────────────
   const stockRows = info.map((r) => ({
     stockId: r.stock_id,
@@ -217,6 +275,7 @@ async function main() {
   console.log('  主檔  ', JSON.stringify(stockRows.find((s) => s.stockId === '2330')));
   console.log('  日頻  ', JSON.stringify(merged.find((m) => m.stockId === '2330')));
   console.log('  股本  ', JSON.stringify(profiles.find((p) => p.stockId === '2330')));
+  console.log('  財報  ', JSON.stringify(quarterlyRows.find((q) => q.stockId === '2330')));
 
   // ── 5. 寫入（乾跑時回滾）─────────────────────────────────────
   console.log(`\n[5/5] ${COMMIT ? '寫入資料庫…' : '在交易中試寫（之後回滾）…'}`);
@@ -226,9 +285,11 @@ async function main() {
         const s = await upsertStocks(tx, stockRows);
         const d = await upsertDaily(tx, merged);
         const c = await upsertCapital(tx, capitalRows);
-        console.log(`  stock          寫入 ${s} 列`);
-        console.log(`  stock_daily    寫入 ${d} 列`);
-        console.log(`  stock_capital  寫入 ${c} 列`);
+        const q = await upsertQuarterly(tx, quarterlyRows);
+        console.log(`  stock            寫入 ${s} 列`);
+        console.log(`  stock_daily      寫入 ${d} 列`);
+        console.log(`  stock_capital    寫入 ${c} 列`);
+        console.log(`  stock_quarterly  寫入 ${q} 列`);
 
         const inTx = await tx.$queryRawUnsafe<{ t: string; n: bigint }[]>(COUNT_SQL);
         console.log('  交易內表列數：', inTx.map((r) => `${r.t}=${r.n}`).join('  '));

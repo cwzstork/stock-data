@@ -120,6 +120,14 @@ const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'per', label: '本益比', right: true },
   { key: 'pbr', label: '淨值比', right: true },
   { key: 'capital', label: '股本(百萬)', right: true },
+  { key: 'gross_margin', label: '毛利率(%)', right: true },
+  { key: 'op_margin', label: '營益率(%)', right: true },
+  { key: 'net_margin', label: '淨利率(%)', right: true },
+  { key: 'roe', label: 'ROE(%)', right: true },
+  { key: 'debt_ratio', label: '負債比(%)', right: true },
+  { key: 'eps', label: 'EPS', right: true },
+  { key: 'bvps', label: '每股淨值', right: true },
+  { key: null, label: '財報期別' },
 ];
 
 function Row({ r }: { r: ScreenerRow }) {
@@ -138,6 +146,14 @@ function Row({ r }: { r: ScreenerRow }) {
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.per, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.pbr, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{scaled(r.capital, 1e6)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.gross_margin, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.op_margin, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.net_margin, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.roe, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.debt_ratio, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.eps, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.bvps, 2)}</td>
+      <td className="px-2 py-1 whitespace-nowrap text-zinc-500">{r.period_end ?? dash}</td>
     </tr>
   );
 }
@@ -198,6 +214,23 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <Range label="股價淨值比" name="pbr" min={f.pbrMin} max={f.pbrMax} />
           <Range label="收盤價" name="close" min={f.closeMin} max={f.closeMax} />
           <Range label="股本 (百萬元)" name="cap" min={f.capMin} max={f.capMax} />
+
+          <Range label="毛利率 (%)" name="gm" min={f.gmMin} max={f.gmMax} />
+          <Range label="營業利益率 (%)" name="om" min={f.omMin} max={f.omMax} />
+          <Range label="淨利率 (%)" name="nm" min={f.nmMin} max={f.nmMax} />
+          <Range label="ROE 年化 (%)" name="roe" min={f.roeMin} max={f.roeMax} />
+          <Range label="EPS (累計)" name="eps" min={f.epsMin} max={f.epsMax} />
+
+          <Field label="負債比上限 (%)">
+            <input
+              type="number"
+              step="any"
+              name="debtMax"
+              defaultValue={f.debtMax ?? ''}
+              placeholder="例：60"
+              className={inputCls}
+            />
+          </Field>
 
           <Field label="成交量下限 (張)">
             <input
@@ -289,7 +322,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[1100px] text-sm">
+            <table className="w-full min-w-[1700px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {COLUMNS.map((c) => (
@@ -343,7 +376,11 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           )}
 
           <p className="mt-6 text-xs text-zinc-400">
-            興櫃沒有集中撮合，交易所不公告本益比與殖利率，那幾欄會是空的；ETF 同理沒有股本與本益比。
+            興櫃沒有集中撮合，交易所不公告本益比與殖利率，那幾欄會是空的；ETF 同理沒有股本與財報。
+            銀行業沒有單一「營業收入」，毛利率一類自然算不出來。
+            <br />
+            財報是<strong>累計數</strong>：EPS 與各項比率的分子都是年初至該季，
+            ROE 已乘以 4/季別年化以便比較。財報只取交易日之前已公告的期別，不會用到未來資料。
           </p>
         </>
       )}

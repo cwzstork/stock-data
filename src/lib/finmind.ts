@@ -12,7 +12,7 @@
  * FinMind 留給「個股歷史回補」與「財報」這種必須逐檔抓的場景。
  */
 
-import { fetchWithRetry } from './http';
+import { fetchJson } from './http';
 
 const BASE_URL = 'https://api.finmindtrade.com/api/v4/data';
 
@@ -36,8 +36,6 @@ interface FinMindResponse<T> {
 }
 
 /** 免費層有每小時請求上限，撞到就退避重試 */
-const MAX_RETRY = 4;
-
 async function request<T>(dataset: string, params: Params): Promise<T[]> {
   const token = process.env.FINMIND_TOKEN;
   const url = new URL(BASE_URL);
@@ -47,31 +45,15 @@ async function request<T>(dataset: string, params: Params): Promise<T[]> {
   }
   if (token) url.searchParams.set('token', token);
 
-  for (let attempt = 0; attempt <= MAX_RETRY; attempt += 1) {
-    const res = await fetchWithRetry(
-      url,
-      { headers: { accept: 'application/json' } },
-      { label: `finmind ${dataset}` },
-    );
+  const { ok, status, body } = await fetchJson<FinMindResponse<T>>(url, {
+    label: `finmind ${dataset}`,
+    // 402 / 429 是額度用完，要等久一點才有意義
+    retryStatus: [402, 429],
+    backoffMs: 5_000,
+  });
 
-    // 402 / 429 是額度用完，等一下再試；其餘 4xx 重試也沒用
-    if (res.status === 402 || res.status === 429) {
-      if (attempt === MAX_RETRY) {
-        throw new FinMindError('FinMind 額度用盡，重試多次仍失敗', res.status, dataset);
-      }
-      const waitMs = 2 ** attempt * 5_000;
-      console.warn(`  [finmind] ${dataset} 被限流(${res.status})，${waitMs / 1000}s 後重試`);
-      await new Promise((r) => setTimeout(r, waitMs));
-      continue;
-    }
-
-    const body = (await res.json().catch(() => ({}))) as FinMindResponse<T>;
-    if (!res.ok) {
-      throw new FinMindError(body.msg ?? `HTTP ${res.status}`, res.status, dataset);
-    }
-    return body.data ?? [];
-  }
-  throw new FinMindError('unreachable', 0, dataset);
+  if (!ok) throw new FinMindError(body.msg ?? `HTTP ${status}`, status, dataset);
+  return body.data ?? [];
 }
 
 export interface StockInfoRow {
