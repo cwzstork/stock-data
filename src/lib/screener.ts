@@ -41,6 +41,15 @@ export interface Filters {
   epsMax: number | null;
   /** 負債比上限(%) */
   debtMax: number | null;
+  // ── 以下來自配息紀錄 ──
+  tyMin: number | null;
+  tyMax: number | null;
+  /** 近 5 年平均股利 ÷ 基準股價 的下限(%) */
+  y5Min: number | null;
+  /** 近 10 年平均股利 ÷ 基準股價 的下限(%) */
+  y10Min: number | null;
+  /** 連續配息年數下限 */
+  streakMin: number | null;
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -65,6 +74,13 @@ const RATIO = {
   op_margin: 'CASE WHEN q.revenue > 0 THEN q.operating_income * 100.0 / q.revenue END',
   net_margin: 'CASE WHEN q.revenue > 0 THEN q.net_income_parent * 100.0 / q.revenue END',
   debt_ratio: 'CASE WHEN q.total_assets > 0 THEN q.total_liabilities * 100.0 / q.total_assets END',
+  // 用「近 N 年平均現金股利 ÷ 基準日收盤價」。
+  // 嚴格定義應該是「每年股利 ÷ 該年均價再平均」，那需要歷史股價（Phase 3-2）。
+  // 現在這個算的是「用今天的價格買進，領過去 N 年的平均股利會有多少報酬」。
+  yield5: 'CASE WHEN d.close > 0 THEN dy.avg5 * 100.0 / d.close END',
+  yield10: 'CASE WHEN d.close > 0 THEN dy.avg10 * 100.0 / d.close END',
+  // 自己算的年化殖利率。ETF 交易所不公告，除息後也沒有更新延遲
+  ttm_yield: 'CASE WHEN d.close > 0 THEN dv.ttm_cash * 100.0 / d.close END',
   roe: `CASE WHEN q.equity_parent > 0
           THEN q.net_income_parent * 100.0 / q.equity_parent
                * (4.0 / EXTRACT(QUARTER FROM q.period_end))
@@ -88,6 +104,11 @@ const SORT_COLUMNS = {
   roe: RATIO.roe,
   eps: 'q.eps',
   bvps: 'q.book_value_per_share',
+  ttm_yield: 'CASE WHEN d.close > 0 THEN dv.ttm_cash * 100.0 / d.close END',
+  ttm_cash: 'dv.ttm_cash',
+  yield5: 'CASE WHEN d.close > 0 THEN dy.avg5 * 100.0 / d.close END',
+  yield10: 'CASE WHEN d.close > 0 THEN dy.avg10 * 100.0 / d.close END',
+  streak: 'dy.streak',
 } as const;
 
 export type SortKey = keyof typeof SORT_COLUMNS;
@@ -146,6 +167,11 @@ export function parseFilters(params: RawParams): Filters {
     epsMin: toNumber(toStr(params.epsMin)),
     epsMax: toNumber(toStr(params.epsMax)),
     debtMax: toNumber(toStr(params.debtMax)),
+    tyMin: toNumber(toStr(params.tyMin)),
+    tyMax: toNumber(toStr(params.tyMax)),
+    y5Min: toNumber(toStr(params.y5Min)),
+    y10Min: toNumber(toStr(params.y10Min)),
+    streakMin: toNumber(toStr(params.streakMin)),
     sort,
     dir: toStr(params.dir) === 'asc' ? 'asc' : 'desc',
     page: Math.max(1, toNumber(toStr(params.page)) ?? 1),
@@ -175,6 +201,12 @@ export interface ScreenerRow {
   roe: string | null;
   eps: string | null;
   bvps: string | null;
+  ttm_yield: string | null;
+  ttm_cash: string | null;
+  ttm_count: string | null;
+  yield5: string | null;
+  yield10: string | null;
+  streak: string | null;
 }
 
 /**
@@ -214,6 +246,52 @@ const QUARTERLY_LATERAL = `
      ORDER BY qq.period_end DESC
      LIMIT 1
   ) q ON true`;
+
+/**
+ * 配息彙總。
+ *
+ * 為什麼不直接用 stock_daily.dividend_yield：
+ *   交易所的 BWIBBU 報表不含 ETF（384 檔一筆都沒有），
+ *   而且除息後股利基數有更新延遲（台積電 2026-09-16 除息 7 元，
+ *   到 09-24 的公告殖利率仍未計入）。自己從逐筆紀錄算就沒這兩個問題。
+ *
+ * 「近 N 年」一律只算**完整年度**（去年往回數 N 年），不含當年。
+ * 把只過了一半的當年度混進平均，會讓下半年配息的公司被嚴重低估。
+ */
+const DIVIDEND_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT sum(cash)  AS ttm_cash,
+           count(*)   AS ttm_count
+      FROM stock_dividend v
+     WHERE v.stock_id = d.stock_id
+       AND v.ex_date <= d.trade_date
+       AND v.ex_date >  d.trade_date - interval '1 year'
+  ) dv ON true
+  LEFT JOIN LATERAL (
+    SELECT avg(yr_cash) FILTER (WHERE yr > yr_base - 5)  AS avg5,
+           avg(yr_cash) FILTER (WHERE yr > yr_base - 10) AS avg10,
+           count(*)     FILTER (WHERE yr > yr_base - 10) AS paid_years,
+           -- 連續配息年數：年份由新到舊排，idx 是名次。
+           -- 沒斷的話「基準年 − 該年」會等於名次；一有缺年，差值就永遠大於名次，
+           -- 之後再也不會相等，所以計數自然在斷點停住。
+           count(*)     FILTER (WHERE yr_base - yr = idx) AS streak
+      FROM (
+        SELECT yr, yr_cash, yr_base,
+               row_number() OVER (ORDER BY yr DESC) - 1 AS idx
+          FROM (
+            SELECT extract(year from v.ex_date)::int            AS yr,
+                   sum(v.cash)                                  AS yr_cash,
+                   extract(year from d.trade_date)::int - 1     AS yr_base
+              FROM stock_dividend v
+             WHERE v.stock_id = d.stock_id
+               AND v.ex_date <= d.trade_date
+               AND extract(year from v.ex_date)::int <= extract(year from d.trade_date)::int - 1
+             GROUP BY 1, 3
+            HAVING sum(v.cash) > 0
+          ) g
+      ) years
+     GROUP BY yr_base
+  ) dy ON true`;
 
 interface Where {
   sql: string;
@@ -260,6 +338,13 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.epsMin !== null) add('q.eps >= ?', f.epsMin);
   if (f.epsMax !== null) add('q.eps <= ?', f.epsMax);
 
+  // 配息衍生條件
+  if (f.tyMin !== null) add(`(${RATIO.ttm_yield}) >= ?`, f.tyMin);
+  if (f.tyMax !== null) add(`(${RATIO.ttm_yield}) <= ?`, f.tyMax);
+  if (f.y5Min !== null) add(`(${RATIO.yield5}) >= ?`, f.y5Min);
+  if (f.y10Min !== null) add(`(${RATIO.yield10}) >= ?`, f.y10Min);
+  if (f.streakMin !== null) add('dy.streak >= ?', f.streakMin);
+
   return { sql: parts.join('\n     AND '), values };
 }
 
@@ -297,7 +382,13 @@ const SELECT_COLS = `
   round((${RATIO.debt_ratio})::numeric, 2)::text   AS debt_ratio,
   round((${RATIO.roe})::numeric, 2)::text          AS roe,
   q.eps::text                                  AS eps,
-  q.book_value_per_share::text                 AS bvps`;
+  q.book_value_per_share::text                 AS bvps,
+  round((${RATIO.ttm_yield})::numeric, 2)::text AS ttm_yield,
+  round(dv.ttm_cash, 4)::text                  AS ttm_cash,
+  dv.ttm_count::text                           AS ttm_count,
+  round((${RATIO.yield5})::numeric, 2)::text   AS yield5,
+  round((${RATIO.yield10})::numeric, 2)::text  AS yield10,
+  dy.streak::text                              AS streak`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
@@ -309,6 +400,7 @@ function baseQuery(where: Where, f: Filters) {
     JOIN stock s ON s.stock_id = d.stock_id
     ${CAPITAL_LATERAL}
     ${QUARTERLY_LATERAL}
+    ${DIVIDEND_LATERAL}
    WHERE ${where.sql}
    ORDER BY ${SORT_COLUMNS[f.sort]} ${f.dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, s.stock_id ASC`;
 }
@@ -336,6 +428,7 @@ export async function runScreener(f: Filters, dates: string[]): Promise<Screener
     JOIN stock s ON s.stock_id = d.stock_id
     ${CAPITAL_LATERAL}
     ${QUARTERLY_LATERAL}
+    ${DIVIDEND_LATERAL}
    WHERE ${where.sql}`;
   const [{ n: total }] = await prisma.$queryRawUnsafe<{ n: number }[]>(countSql, ...where.values);
 

@@ -30,6 +30,12 @@ const HEADERS = [
   'EPS(累計)',
   '每股淨值',
   '財報期別',
+  '年化殖利率(%)',
+  '近12月股利',
+  '近12月配息次數',
+  '5年均殖(%)',
+  '10年均殖(%)',
+  '連續配息(年)',
 ];
 
 /** CSV 逃脫：含逗號、引號或換行就要包起來，引號自身要加倍 */
@@ -78,6 +84,12 @@ export async function GET(req: NextRequest) {
         cell(r.eps),
         cell(r.bvps),
         cell(r.period_end),
+        cell(r.ttm_yield),
+        cell(r.ttm_cash),
+        cell(r.ttm_count),
+        cell(r.yield5),
+        cell(r.yield10),
+        cell(r.streak),
       ].join(','),
     );
   }

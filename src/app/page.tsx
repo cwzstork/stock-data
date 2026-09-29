@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { deleteFilter, listSavedFilters, saveFilter } from '@/lib/saved-filter';
 import {
   MARKET_LABEL,
   PAGE_SIZES,
@@ -127,6 +128,11 @@ const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'debt_ratio', label: '負債比(%)', right: true },
   { key: 'eps', label: 'EPS', right: true },
   { key: 'bvps', label: '每股淨值', right: true },
+  { key: 'ttm_yield', label: '年化殖利率(%)', right: true },
+  { key: 'ttm_cash', label: '近12月股利', right: true },
+  { key: 'yield5', label: '5年均殖(%)', right: true },
+  { key: 'yield10', label: '10年均殖(%)', right: true },
+  { key: 'streak', label: '連續配息(年)', right: true },
   { key: null, label: '財報期別' },
 ];
 
@@ -153,6 +159,11 @@ function Row({ r }: { r: ScreenerRow }) {
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.debt_ratio, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.eps, 2)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{fmt(r.bvps, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(r.ttm_yield, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.ttm_cash, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.yield5, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.yield10, 2)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{fmt(r.streak, 0)}</td>
       <td className="px-2 py-1 whitespace-nowrap text-zinc-500">{r.period_end ?? dash}</td>
     </tr>
   );
@@ -166,7 +177,14 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
 
   // 交易日清單只查一次：下拉選單要用，runScreener 決定基準日也要用
   const dates = await getTradeDates();
-  const [result, industries] = await Promise.all([runScreener(f, dates), getIndustries()]);
+  const [result, industries, saved] = await Promise.all([
+    runScreener(f, dates),
+    getIndustries(),
+    listSavedFilters(),
+  ]);
+
+  // 目前畫面上的條件，原樣拿來存或分享
+  const currentQuery = withParams(params, []);
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 py-6">
@@ -176,6 +194,56 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           條件都在網址裡，可以加書籤或分享——每次打開都是用當下的資料重跑一次，不會拿到過期的清單。
         </p>
       </header>
+
+      <section className="mb-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-500">已存條件</span>
+          {saved.length === 0 && (
+            <span className="text-xs text-zinc-400">還沒有。設好條件後在右邊命名存起來。</span>
+          )}
+          {saved.map((sf) => (
+            <span
+              key={sf.id}
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-300 pl-3 text-sm dark:border-zinc-700"
+            >
+              <Link href={`/?${sf.query}`} className="py-1 hover:underline" title={sf.query || '(無條件)'}>
+                {sf.name}
+              </Link>
+              <form action={deleteFilter} className="contents">
+                <input type="hidden" name="id" value={sf.id} />
+                <button
+                  type="submit"
+                  className="px-2 py-1 text-zinc-400 hover:text-red-600"
+                  title="刪除"
+                  aria-label={`刪除 ${sf.name}`}
+                >
+                  ×
+                </button>
+              </form>
+            </span>
+          ))}
+        </div>
+
+        <form action={saveFilter} className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="query" value={currentQuery} />
+          <input
+            name="name"
+            required
+            maxLength={60}
+            placeholder="幫目前這組條件取個名字，例如：高毛利存股"
+            className={`${inputCls} max-w-md flex-1`}
+          />
+          <button
+            type="submit"
+            className="rounded border border-zinc-300 px-3 py-1 text-sm dark:border-zinc-700"
+          >
+            存起來
+          </button>
+          <span className="text-xs text-zinc-400">
+            存的是條件不是結果——每次打開都用當下資料重跑。同名會覆蓋。
+          </span>
+        </form>
+      </section>
 
       <form method="get" className="mb-5 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -220,6 +288,23 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <Range label="淨利率 (%)" name="nm" min={f.nmMin} max={f.nmMax} />
           <Range label="ROE 年化 (%)" name="roe" min={f.roeMin} max={f.roeMax} />
           <Range label="EPS (累計)" name="eps" min={f.epsMin} max={f.epsMax} />
+
+          <Range label="年化殖利率 (%)" name="ty" min={f.tyMin} max={f.tyMax} />
+
+          <Field label="5年均殖下限 (%)">
+            <input type="number" step="any" name="y5Min" defaultValue={f.y5Min ?? ''}
+              placeholder="例：4" className={inputCls} />
+          </Field>
+
+          <Field label="10年均殖下限 (%)">
+            <input type="number" step="any" name="y10Min" defaultValue={f.y10Min ?? ''}
+              placeholder="例：4" className={inputCls} />
+          </Field>
+
+          <Field label="連續配息年數下限">
+            <input type="number" name="streakMin" defaultValue={f.streakMin ?? ''}
+              placeholder="例：5" className={inputCls} />
+          </Field>
 
           <Field label="負債比上限 (%)">
             <input
@@ -322,7 +407,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[1700px] text-sm">
+            <table className="w-full min-w-[2300px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {COLUMNS.map((c) => (
@@ -378,6 +463,10 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <p className="mt-6 text-xs text-zinc-400">
             興櫃沒有集中撮合，交易所不公告本益比與殖利率，那幾欄會是空的；ETF 同理沒有股本與財報。
             銀行業沒有單一「營業收入」，毛利率一類自然算不出來。
+            <br />
+            殖利率有兩欄：「殖利率」是交易所公告值（<strong>不含 ETF</strong>，除息後還有更新延遲）；
+            「年化殖利率」是我們用逐筆配息紀錄自己算的近 12 個月合計，ETF 也有。
+            5年／10年均殖 = 近 N 個<strong>完整年度</strong>的平均現金股利 ÷ 基準日收盤價。
             <br />
             財報是<strong>累計數</strong>：EPS 與各項比率的分子都是年初至該季，
             ROE 已乘以 4/季別年化以便比較。財報只取交易日之前已公告的期別，不會用到未來資料。

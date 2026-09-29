@@ -173,3 +173,20 @@ model BackfillLog {
   @@index([dataset, syncedAt])
   @@map("backfill_log")
 }
+
+/// 存起來的篩選條件。
+///
+/// 存的是「條件」不是「結果」——結果隔天股價一變就不準了，
+/// 條件則永遠可以重跑。內容就是網址的 query string，
+/// 所以存下來的東西跟你分享網址給別人時是同一份東西。
+model SavedFilter {
+  id        Int      @id @default(autoincrement())
+  /// 唯一，存同名條件就是覆蓋
+  name      String   @unique @db.VarChar(60)
+  /// URL query string，例如 gmMin=40&roeMin=15&debtMax=50
+  query     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("saved_filter")
+}
