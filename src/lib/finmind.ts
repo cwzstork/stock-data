@@ -104,3 +104,33 @@ export async function fetchBalanceSheet(
     end_date: endDate,
   });
 }
+
+export interface DividendRow {
+  date: string;
+  stock_id: string;
+  /** 所屬期別，季配是「114年第3季」，年配與 ETF 是「115」 */
+  year: string;
+  StockEarningsDistribution: number;
+  StockStatutorySurplus: number;
+  StockExDividendTradingDate: string;
+  CashEarningsDistribution: number;
+  CashStatutorySurplus: number;
+  CashExDividendTradingDate: string;
+  CashDividendPaymentDate: string;
+}
+
+/**
+ * 配息紀錄（逐檔）。
+ *
+ * 實測涵蓋 ETF：0056 有 20 筆、00878 有 25 筆，
+ * 而交易所的 BWIBBU 報表完全不含 ETF。
+ */
+export async function fetchDividends(
+  stockId: string,
+  startDate: string,
+): Promise<DividendRow[]> {
+  return request<DividendRow>('TaiwanStockDividend', {
+    data_id: stockId,
+    start_date: startDate,
+  });
+}

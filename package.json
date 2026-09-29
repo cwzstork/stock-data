@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "sync": "tsx scripts/sync.ts",
+    "backfill": "tsx scripts/backfill.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

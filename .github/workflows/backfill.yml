@@ -1,0 +1,58 @@
+name: 歷史資料回補
+
+# FinMind 免費層必須逐檔抓，三千多檔一次跑不完，所以切成每小時一批。
+# 進度記在 backfill_log，每批只處理還沒補過的，跑完就自己閒置。
+on:
+  schedule:
+    # 避開整點——GitHub 的排程在整點最壅塞，延遲最久
+    - cron: '30 * * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '這次處理幾檔（FinMind 額度 600 次/小時）'
+        required: false
+        default: '550'
+
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # 550 檔 × 6 秒 ≈ 55 分鐘，留餘裕
+    timeout-minutes: 80
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安裝相依套件
+        run: npm ci
+
+      - name: 回補
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        shell: bash
+        run: |
+          set -o pipefail
+          # 2>&1 不能少：錯誤走 stderr，只導 stdout 的話失敗時看不到原因
+          npm run backfill -- --commit --limit=${{ inputs.limit || '550' }} 2>&1 | tee backfill.log
+
+      - name: 把結果貼到執行摘要
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '```'
+            # 開頭的進度與結尾的統計最有用，中間幾百行逐檔明細略過
+            head -n 12 backfill.log 2>/dev/null
+            echo '...'
+            tail -n 12 backfill.log 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || echo '(沒有產生 log)' >> "$GITHUB_STEP_SUMMARY"

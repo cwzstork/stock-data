@@ -27,6 +27,7 @@ model Stock {
   daily     StockDaily[]
   capital   StockCapital[]
   quarterly StockQuarterly[]
+  dividend  StockDividend[]
 
   @@index([market])
   @@index([industry])
@@ -121,4 +122,54 @@ model StockQuarterly {
   @@id([stockId, periodEnd])
   @@index([periodEnd])
   @@map("stock_quarterly")
+}
+
+/// 配息紀錄（每一次除息一列）
+/// 來源：FinMind TaiwanStockDividend（逐檔抓，涵蓋 ETF）
+///
+/// 為什麼不直接用交易所公告的殖利率就好：
+///   1. 交易所的 BWIBBU 報表完全不含 ETF，384 檔 ETF/ETN 一筆殖利率都沒有
+///   2. 除息後交易所的股利基數有更新延遲（台積電 2026-09-16 除息，
+///      到 09-24 的公告殖利率仍未計入那 7 元）
+///   3. 算不出 5 年／10 年平均殖利率
+/// 有了逐筆紀錄，這三件事都能自己算。
+model StockDividend {
+  stockId String   @map("stock_id") @db.VarChar(10)
+  /// 除息（權）交易日。優先取現金股利的除息日，只配股票股利時取除權日。
+  /// 台股除權除息幾乎都同一天，分開的情況極少，這裡以現金為準。
+  exDate  DateTime @map("ex_date") @db.Date
+
+  /// 現金股利合計＝盈餘配息＋公積配息，元/股
+  cash     Decimal @db.Decimal(12, 6)
+  /// 股票股利合計＝盈餘配股＋公積配股，元/股（面額 10 元）
+  stockDiv Decimal @map("stock_div") @db.Decimal(12, 6)
+
+  /// 現金股利發放日
+  payDate DateTime? @map("pay_date") @db.Date
+  /// 所屬期別，例如「114年第3季」或「115」。季配與年配的寫法不同，原樣保留
+  period  String?   @db.VarChar(30)
+
+  stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
+
+  @@id([stockId, exDate])
+  @@index([exDate])
+  @@map("stock_dividend")
+}
+
+/// 逐檔回補的進度記錄。
+///
+/// 免費層要逐檔打 API，三千多檔跑不完一次，所以要能中斷續跑。
+/// 沒有這張表的話，「沒有配息紀錄的公司」會每次都被重抓。
+/// 刻意不設外鍵：主檔暫時少一檔時不該把進度一起刪掉。
+model BackfillLog {
+  stockId  String   @map("stock_id") @db.VarChar(10)
+  /// dividend / financials / balance
+  dataset  String   @db.VarChar(30)
+  syncedAt DateTime @map("synced_at")
+  /// 抓到幾列，0 表示這檔真的沒有資料（不是失敗）
+  rows     Int
+
+  @@id([stockId, dataset])
+  @@index([dataset, syncedAt])
+  @@map("backfill_log")
 }
