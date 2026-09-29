@@ -32,6 +32,35 @@ jobs:
       - name: 安裝相依套件
         run: npm ci
 
+      # 同步失敗時第一個要問的是「是不是連不到來源」。
+      # GitHub 的 runner 在美國，證交所／櫃買有可能擋境外或雲端 IP，
+      # 先個別打一次把狀態印出來，免得只看到一句 exit code 1。
+      - name: 來源連通性檢查
+        shell: bash
+        run: |
+          check() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$2" || echo "連線失敗")
+            printf '  %-28s %s\n' "$1" "$code"
+          }
+          echo "runner 對外 IP: $(curl -s --max-time 15 https://api.ipify.org || echo '(查不到)')"
+          check 'TWSE 上市日成交'   'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'
+          check 'TWSE 上市本益比'   'https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL'
+          check 'TWSE 上市基本資料' 'https://openapi.twse.com.tw/v1/opendata/t187ap03_L'
+          check 'TPEx 上櫃日收盤'   'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes'
+          check 'TPEx 上櫃本益比'   'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis'
+          check 'TPEx 興櫃行情'     'https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics'
+          check 'FinMind'          'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo'
+
+      - name: 檢查必要的 secret 有沒有設
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: |
+          # 只印長度，不印值
+          [ -n "$DATABASE_URL" ]  && echo "  DATABASE_URL  已設定（${#DATABASE_URL} 字元）"  || { echo "  DATABASE_URL 未設定"; exit 1; }
+          [ -n "$FINMIND_TOKEN" ] && echo "  FINMIND_TOKEN 已設定（${#FINMIND_TOKEN} 字元）" || echo "  FINMIND_TOKEN 未設定（會走匿名額度，容易被限流）"
+
       - name: 同步
         env:
           # 執行期只用得到 pooled 連線。DIRECT_URL 是 migrate 才要的，這裡不放。
@@ -41,7 +70,9 @@ jobs:
         run: |
           # 預設的 bash -e 不含 pipefail，接了 tee 之後同步失敗會被 tee 的 0 蓋掉，整個 job 變綠燈
           set -o pipefail
-          npm run sync -- --commit | tee sync.log
+          # 2>&1 很重要：腳本的錯誤走 console.error（stderr），
+          # 只導 stdout 的話失敗時 log 會停在最後一行正常輸出，完全看不到原因
+          npm run sync -- --commit 2>&1 | tee sync.log
 
       - name: 把結果貼到執行摘要
         if: always()
@@ -49,6 +80,6 @@ jobs:
         run: |
           {
             echo '```'
-            tail -n 40 sync.log 2>/dev/null || echo '(沒有產生 log，通常是安裝階段就失敗了)'
+            tail -n 80 sync.log 2>/dev/null || echo '(沒有產生 log，通常是安裝階段就失敗了)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
