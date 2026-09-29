@@ -600,6 +600,17 @@ const DATASETS: Dataset[] = [
 
 /** FinMind register 層的文件額度是 600 次/小時，留一點餘裕給每日同步 */
 const CALLS_PER_HOUR = Number(flag('rate') ?? 560);
+
+/**
+ * 單次執行要跑多久。
+ *
+ * GitHub Actions 單一 job 上限 6 小時，這裡抓 5.5 小時。
+ * 一開始設計成「每小時一批」，但實測 GitHub 的排程根本沒有準時觸發——
+ * workflow 設定完全正確卻連續三個小時一次都沒跑，官方文件也明說排程是
+ * 盡力而為、高負載時會延遲甚至丟棄。
+ * 與其依賴它每小時觸發，不如讓單次跑滿，少觸發幾次就少一次失敗機會。
+ */
+const RUN_HOURS = Number(flag('hours') ?? 5.5);
 /** 同一檔內連續兩次呼叫之間的間隔 */
 const CALL_GAP_MS = Math.round(3_600_000 / CALLS_PER_HOUR);
 
@@ -667,12 +678,16 @@ async function main() {
     return;
   }
 
-  const limit = Number(flag('limit') ?? (COMMIT ? Math.floor(CALLS_PER_HOUR / ds.calls) : 3));
+  const limit = Number(
+    flag('limit') ?? (COMMIT ? Math.floor((CALLS_PER_HOUR * RUN_HOURS) / ds.calls) : 3),
+  );
   const itemGap = CALL_GAP_MS * ds.calls;
 
   console.log(`\n=== 回補「${ds.label}」 ${COMMIT ? '【實際寫入】' : '【乾跑 DRY RUN】'} ===`);
+  const estHours = (limit * itemGap) / 3_600_000;
   console.log(
-    `起始 ${START_DATE}　本次上限 ${limit} 檔　每檔 ${ds.calls} 次呼叫　間隔 ${(itemGap / 1000).toFixed(1)}s`,
+    `起始 ${START_DATE}　本次上限 ${limit} 檔　每檔 ${ds.calls} 次呼叫　` +
+      `間隔 ${(itemGap / 1000).toFixed(1)}s　預估最多 ${estHours.toFixed(1)} 小時`,
   );
   const p0 = await progress(ds.key);
   console.log(`整體進度 ${p0.done} / ${p0.total}`);

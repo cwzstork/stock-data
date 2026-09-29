@@ -94,16 +94,25 @@
   <div class="card"><b>3,081</b><span>股票主檔</span></div>
   <div class="card"><b>47</b><span>篩選器欄位數</span></div>
   <div class="card"><b>560 / 4 / 6</b><span>回補進度：配息 / 年度 / 季報（共 3,081）</span></div>
+  <div class="card"><b>每 6 小時</b><span>回補排程，單次跑滿 5.5 小時</span></div>
 </div>
 
-<h2>一、時間基準：六種</h2>
+<h2>一、時間基準：七種</h2>
+<div class="box ok">
+<p><strong>畫面上每個欄位名都直接標出期間長度</strong>，不用回頭查這張表：</p>
+<p><code>毛利率(累計6個月)%</code>　<code>EPS(單季3個月)</code>　<code>ROE(近四季12個月)%</code>　
+<code>負債比(財報期末)%</code>　<code>董監持股(公告月)%</code></p>
+<p>「累計」的月數會隨當期季別自動變動（Q1→3、Q2→6、Q3→9、Q4→12）。
+表格上方另有一列，列出這個基準日對應的每一段實際日期區間。</p>
+</div>
 <div class="scroll"><table>
 <tr><th>標記</th><th>意思</th><th>實際期間（基準日 2026-09-24、財報期 2026-06-30）</th></tr>
 <tr><td><span class="tag d">當日</span></td><td>基準日那一天</td><td>2026-09-24</td></tr>
-<tr><td><span class="tag q">單季</span></td><td>最新那一季，三個月</td><td><strong>2026-04-01 ~ 2026-06-30</strong></td></tr>
-<tr><td><span class="tag q">累計</span></td><td>該年度年初到最新一季</td><td><strong>2026-01-01 ~ 2026-06-30</strong></td></tr>
-<tr><td><span class="tag q">近四季</span></td><td>最近四季加總，滾動一年</td><td><strong>2025-07-01 ~ 2026-06-30</strong></td></tr>
-<tr><td><span class="tag now">當期</span></td><td>財報期末或公告當期的時點數，不能加總</td><td>2026-06-30 / 2026-08-31 / 2026-09-28</td></tr>
+<tr><td><span class="tag q">單季3個月</span></td><td>最新那一季，固定三個月</td><td><strong>2026-04-01 ~ 2026-06-30</strong></td></tr>
+<tr><td><span class="tag q">累計N個月</span></td><td>該年度年初到最新一季。<strong>長度隨季別變動</strong>：Q1 是 3 個月、Q2 是 6、Q3 是 9、Q4 是 12。畫面上會直接標出月數</td><td><strong>2026-01-01 ~ 2026-06-30</strong>（6 個月）</td></tr>
+<tr><td><span class="tag q">近四季12個月</span></td><td>最近四季加總，滾動一年</td><td><strong>2025-07-01 ~ 2026-06-30</strong></td></tr>
+<tr><td><span class="tag now">財報期末</span></td><td><strong>不是一段期間，是一個時間點</strong>的餘額。負債比、流動比、每股淨值屬於這類</td><td>2026-06-30 當天的資產負債表</td></tr>
+<tr><td><span class="tag now">公告月 / 公告日</span></td><td>同樣是時間點，但各資料的公告時間不同，所以分開標示</td><td>內部人持股 <strong>2026-08-31</strong>　股本 <strong>2026-09-28</strong></td></tr>
 <tr><td><span class="tag m">近12月</span></td><td>基準日往回整整一年</td><td><strong>2025-09-25 ~ 2026-09-24</strong></td></tr>
 <tr><td><span class="tag y">N年</span></td><td>完整年度往回數，<strong>不含當年</strong></td><td>5年 <strong>2021-01-01 ~ 2025-12-31</strong>　10年 <strong>2016-01-01 ~ 2025-12-31</strong></td></tr>
 </table></div>
@@ -271,7 +280,13 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 </div>
 <div>
   <h4>2. 完成進行中的回補</h4>
-  <small>配息 560、年度彙總 4、季報 6，各 3,081 檔。每小時 :30 自動跑一輪，合計約 28 小時。</small>
+  <small>配息 560、年度彙總 4、季報 6，各 3,081 檔。合計約 28 小時。</small>
+  <p><strong>原本設每小時 :30 觸發，實測連續三小時一次都沒跑。</strong>
+  設定完全正確（workflow state=active、預設分支、schedule 在 main 上），
+  純粹是 GitHub 的排程沒執行——官方文件明說排程是盡力而為，
+  整點與半點最壅塞，高負載時會延遲甚至整個丟棄。</p>
+  <p>已改成<strong>每 6 小時觸發一次、單次跑滿 5.5 小時</strong>（job 上限 6 小時），
+  分鐘選 :07 避開壅塞時段。觸發次數少一個數量級，錯過一次的代價也小得多。</p>
 </div>
 <div>
   <h4>3. 股本改接季報的歷史值</h4>

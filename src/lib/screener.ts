@@ -600,6 +600,45 @@ export async function getTradeDates(): Promise<string[]> {
   return rows.map((r) => r.d);
 }
 
+export interface PeriodInfo {
+  /** 全市場最新一期財報的期別 */
+  quarterEnd: string | null;
+  /** 第幾季，1~4 */
+  quarter: number | null;
+  /** 股本資料的公告日 */
+  capitalDate: string | null;
+  /** 內部人持股資料的所屬月份 */
+  insiderDate: string | null;
+}
+
+/**
+ * 各項資料的實際期別，用來在畫面上把「累計」「當期」講成具體區間。
+ *
+ * 「累計」的長度隨季別變動（Q1 是 3 個月、Q2 是 6 個月…），
+ * 「當期」對不同欄位又是不同日期（財報期末、股本公告日、內部人公告月），
+ * 光寫「累計」「當期」使用者無從得知到底涵蓋多久。
+ */
+export async function getPeriodInfo(tradeDate: string): Promise<PeriodInfo> {
+  const [r] = await prisma.$queryRawUnsafe<
+    { q: string | null; cap: string | null; ins: string | null }[]
+  >(
+    `SELECT (SELECT to_char(max(period_end), 'YYYY-MM-DD') FROM stock_quarterly
+              WHERE period_end <= $1::date) AS q,
+            (SELECT to_char(max(report_date), 'YYYY-MM-DD') FROM stock_capital
+              WHERE report_date <= $1::date + 30) AS cap,
+            (SELECT to_char(max(period_end), 'YYYY-MM-DD') FROM stock_insider
+              WHERE period_end <= $1::date) AS ins`,
+    tradeDate,
+  );
+  const quarterEnd = r?.q ?? null;
+  return {
+    quarterEnd,
+    quarter: quarterEnd ? Math.ceil(Number(quarterEnd.slice(5, 7)) / 3) : null,
+    capitalDate: r?.cap ?? null,
+    insiderDate: r?.ins ?? null,
+  };
+}
+
 export async function getIndustries(): Promise<string[]> {
   const rows = await prisma.$queryRawUnsafe<{ industry_category: string }[]>(
     `SELECT DISTINCT industry_category FROM stock

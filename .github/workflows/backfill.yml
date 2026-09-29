@@ -4,14 +4,21 @@ name: 歷史資料回補
 # 進度記在 backfill_log，每批只處理還沒補過的，跑完就自己閒置。
 on:
   schedule:
-    # 避開整點——GitHub 的排程在整點最壅塞，延遲最久
-    - cron: '30 * * * *'
+    # 每 6 小時一次，分鐘刻意選 :07。
+    #
+    # 原本設每小時 :30，實測連續三小時一次都沒觸發——設定完全正確
+    # （workflow state=active、預設分支、schedule 在 main 上），
+    # 純粹是 GitHub 的排程沒跑。官方文件明說排程是盡力而為，
+    # 整點與半點最壅塞，高負載時會延遲甚至整個丟棄。
+    #
+    # 改成單次跑滿 5.5 小時（job 上限 6 小時），每 6 小時觸發一次剛好銜接。
+    # 觸發次數少一個數量級，錯過一次的代價也小得多。
+    - cron: '7 */6 * * *'
   workflow_dispatch:
     inputs:
       limit:
-        description: '這次處理幾檔（FinMind 額度 600 次/小時）'
+        description: '這次處理幾檔（留空＝用滿 5.5 小時）'
         required: false
-        default: '550'
 
 concurrency:
   group: backfill
@@ -23,8 +30,8 @@ jobs:
     # 上傳 Release asset 需要寫入權限
     permissions:
       contents: write
-    # 550 檔 × 6 秒 ≈ 55 分鐘，留餘裕
-    timeout-minutes: 80
+    # 腳本自己抓 5.5 小時，這裡留 20 分鐘給安裝與上傳
+    timeout-minutes: 350
 
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +54,8 @@ jobs:
         run: |
           set -o pipefail
           # 2>&1 不能少：錯誤走 stderr，只導 stdout 的話失敗時看不到原因
-          npm run backfill -- --commit --limit=${{ inputs.limit || '550' }} 2>&1 | tee backfill.log
+          # 不帶 --limit 時腳本會依 5.5 小時的額度自己算要處理幾檔
+          npm run backfill -- --commit ${{ inputs.limit && format('--limit={0}', inputs.limit) || '' }} 2>&1 | tee backfill.log
 
       # 檔名就是股號，--clobber 會覆蓋同名 asset，
       # 所以之後重跑不會累積重複資料，也不用先清掉舊檔。

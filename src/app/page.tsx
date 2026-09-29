@@ -5,6 +5,7 @@ import {
   PAGE_SIZES,
   getIndustries,
   getTradeDates,
+  getPeriodInfo,
   parseFilters,
   runScreener,
   type Filters,
@@ -118,7 +119,15 @@ function sortHref(params: RawParams, f: Filters, key: SortKey) {
  *   (當期)   財報期末的時點數，不能加總
  *   (5年)    近 5 個完整年度
  */
-const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
+function buildColumns(ytdMonths: number | null): {
+  key: SortKey | null;
+  label: string;
+  right?: boolean;
+}[] {
+  // 累計的長度隨季別變動：Q1 是 3 個月、Q2 是 6 個月、Q3 是 9、Q4 是 12。
+  // 寫死「累計」使用者無從得知涵蓋多久，所以依當期季別動態標出月數。
+  const ytd = ytdMonths ? `累計${ytdMonths}個月` : '累計';
+  return [
   { key: 'stock_id', label: '股號' },
   { key: null, label: '股名' },
   { key: null, label: '市場' },
@@ -130,28 +139,28 @@ const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'dividend_yield', label: '殖利率(當日,交易所)%', right: true },
   { key: 'per', label: '本益比(當日,近四季)', right: true },
   { key: 'pbr', label: '股價淨值比(當日)', right: true },
-  { key: 'capital', label: '股本(當期,百萬)', right: true },
+  { key: 'capital', label: '股本(公告日,百萬)', right: true },
 
-  { key: 'gross_margin_q', label: '毛利率(單季)%', right: true },
-  { key: 'gross_margin', label: '毛利率(累計)%', right: true },
-  { key: 'op_margin_q', label: '營業利益率(單季)%', right: true },
-  { key: 'op_margin', label: '營業利益率(累計)%', right: true },
-  { key: 'net_margin_q', label: '稅後淨利率(單季)%', right: true },
-  { key: 'net_margin', label: '稅後淨利率(累計)%', right: true },
+  { key: 'gross_margin_q', label: '毛利率(單季3個月)%', right: true },
+  { key: 'gross_margin', label: `毛利率(${ytd})%`, right: true },
+  { key: 'op_margin_q', label: '營業利益率(單季3個月)%', right: true },
+  { key: 'op_margin', label: `營業利益率(${ytd})%`, right: true },
+  { key: 'net_margin_q', label: '稅後淨利率(單季3個月)%', right: true },
+  { key: 'net_margin', label: `稅後淨利率(${ytd})%`, right: true },
 
-  { key: 'rev_yoy', label: '營收成長率(單季年增)%', right: true },
-  { key: 'op_yoy', label: '營業利益成長率(單季年增)%', right: true },
-  { key: 'ni_yoy', label: '稅後淨利成長率(單季年增)%', right: true },
+  { key: 'rev_yoy', label: '營收成長率(單季3個月年增)%', right: true },
+  { key: 'op_yoy', label: '營業利益成長率(單季3個月年增)%', right: true },
+  { key: 'ni_yoy', label: '稅後淨利成長率(單季3個月年增)%', right: true },
 
-  { key: 'roe_ttm', label: 'ROE(近四季)%', right: true },
-  { key: 'roe', label: 'ROE(累計年化)%', right: true },
-  { key: 'roa_ttm', label: 'ROA(近四季)%', right: true },
-  { key: 'roa', label: 'ROA(累計年化)%', right: true },
-  { key: 'debt_ratio', label: '負債比(當期)%', right: true },
-  { key: 'current_ratio', label: '流動比(當期)%', right: true },
-  { key: 'eps', label: 'EPS(單季)', right: true },
-  { key: 'eps_ttm', label: 'EPS(近四季)', right: true },
-  { key: 'bvps', label: '每股淨值(當期)', right: true },
+  { key: 'roe_ttm', label: 'ROE(近四季12個月)%', right: true },
+  { key: 'roe', label: `ROE(${ytd}年化)%`, right: true },
+  { key: 'roa_ttm', label: 'ROA(近四季12個月)%', right: true },
+  { key: 'roa', label: `ROA(${ytd}年化)%`, right: true },
+  { key: 'debt_ratio', label: '負債比(財報期末)%', right: true },
+  { key: 'current_ratio', label: '流動比(財報期末)%', right: true },
+  { key: 'eps', label: 'EPS(單季3個月)', right: true },
+  { key: 'eps_ttm', label: 'EPS(近四季12個月)', right: true },
+  { key: 'bvps', label: '每股淨值(財報期末)', right: true },
 
   { key: 'ttm_yield', label: '年化殖利率(近12月)%', right: true },
   { key: 'ttm_cash', label: '現金股利(近12月)', right: true },
@@ -168,13 +177,14 @@ const COLUMNS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: 'cheap_per', label: '便宜價(本益比法)', right: true },
   { key: 'cheap_pbr', label: '便宜價(淨值法)', right: true },
 
-  { key: 'director_pct', label: '董監持股(當期)%', right: true },
-  { key: 'pledge_pct', label: '董監設質(當期)%', right: true },
-  { key: 'manager_pct', label: '經理人持股(當期)%', right: true },
-  { key: 'major_pct', label: '大股東持股(當期)%', right: true },
+  { key: 'director_pct', label: '董監持股(公告月)%', right: true },
+  { key: 'pledge_pct', label: '董監設質(公告月)%', right: true },
+  { key: 'manager_pct', label: '經理人持股(公告月)%', right: true },
+  { key: 'major_pct', label: '大股東持股(公告月)%', right: true },
 
-  { key: null, label: '財報期別' },
-];
+    { key: null, label: '財報期別' },
+  ];
+}
 
 function Row({ r }: { r: ScreenerRow }) {
   const n = (v: string | null, d = 2) => (
@@ -246,6 +256,28 @@ function Row({ r }: { r: ScreenerRow }) {
   );
 }
 
+/** 季底日 → 該季起始日。2026-06-30 → 2026-04-01 */
+function quarterStart(quarterEnd: string): string {
+  const y = quarterEnd.slice(0, 4);
+  const m = Number(quarterEnd.slice(5, 7));
+  return `${y}-${String(m - 2).padStart(2, '0')}-01`;
+}
+
+/** 季底日 → 近四季的起始日。2026-06-30 → 2025-07-01 */
+function ttmStart(quarterEnd: string): string {
+  const y = Number(quarterEnd.slice(0, 4)) - 1;
+  const m = Number(quarterEnd.slice(5, 7));
+  return `${y}-${String(m + 1).padStart(2, '0')}-01`;
+}
+
+/** 交易日 → 往回整整一年的隔天。2026-09-24 → 2025-09-25 */
+function ttmDayStart(tradeDate: string): string {
+  const d = new Date(`${tradeDate}T00:00:00Z`);
+  d.setUTCFullYear(d.getUTCFullYear() - 1);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 // ── 頁面 ──────────────────────────────────────────────────────────
 
 export default async function Home({ searchParams }: PageProps<'/'>) {
@@ -259,6 +291,9 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
     getIndustries(),
     listSavedFilters(),
   ]);
+  const period = result ? await getPeriodInfo(result.tradeDate) : null;
+  const ytdMonths = period?.quarter ? period.quarter * 3 : null;
+  const COLUMNS = buildColumns(ytdMonths);
 
   // 目前畫面上的條件，原樣拿來存或分享
   const currentQuery = withParams(params, []);
@@ -534,6 +569,23 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
               </span>
             )}
           </div>
+
+          {period?.quarterEnd && (
+            <div className="mb-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-6 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              <strong className="text-zinc-900 dark:text-zinc-100">這個基準日對應的實際期間</strong>
+              <br />
+              財報期別 <strong>{period.quarterEnd}</strong>（第 {period.quarter} 季）
+              ｜ 單季 <strong>{quarterStart(period.quarterEnd)} ~ {period.quarterEnd}</strong>（3 個月）
+              ｜ 累計 <strong>{period.quarterEnd.slice(0, 4)}-01-01 ~ {period.quarterEnd}</strong>（{ytdMonths} 個月）
+              ｜ 近四季 <strong>{ttmStart(period.quarterEnd)} ~ {period.quarterEnd}</strong>（12 個月）
+              <br />
+              近12月 <strong>{ttmDayStart(result.tradeDate)} ~ {result.tradeDate}</strong>
+              ｜ 5年 <strong>{Number(result.tradeDate.slice(0, 4)) - 5}-01-01 ~ {Number(result.tradeDate.slice(0, 4)) - 1}-12-31</strong>
+              ｜ 10年 <strong>{Number(result.tradeDate.slice(0, 4)) - 10}-01-01 ~ {Number(result.tradeDate.slice(0, 4)) - 1}-12-31</strong>
+              {period.capitalDate && <> ｜ 股本公告日 <strong>{period.capitalDate}</strong></>}
+              {period.insiderDate && <> ｜ 內部人持股 <strong>{period.insiderDate}</strong></>}
+            </div>
+          )}
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full min-w-[5200px] text-sm">
