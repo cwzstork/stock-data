@@ -8,7 +8,6 @@ export const dynamic = 'force-dynamic';
 
 /** 一次查太多會拖慢頁面，也對證交所不禮貌 */
 const MAX = 60;
-const DEFAULT_QUERY = '台積電 鴻海 中華電 高股息';
 
 const dash = <span className="text-zinc-400 dark:text-zinc-600">—</span>;
 
@@ -90,7 +89,9 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
   // ids 是多選器送出的明確選取；q 是直接打在網址上的自由文字，保留給分享連結用
   const idsParam = one(params.ids);
   const qParam = one(params.q);
-  const raw = qParam ?? idsParam ?? DEFAULT_QUERY;
+  // 預設是空的——自選清單沒有「合理的預設」，隨便塞幾檔進去
+  // 只會讓人每次都要先刪掉
+  const raw = qParam ?? idsParam ?? '';
 
   // 逗號、全形逗號、頓號、空白都當分隔
   const terms = [...new Set(raw.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean))];
@@ -106,6 +107,7 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
 
   const hitTerms = new Set(matched.map((m) => m.term));
   const missTerms = terms.filter((t) => !hitTerms.has(t));
+  const empty = terms.length === 0;
 
   const nameOf = new Map(picked.map((m) => [m.stock_id, m.stock_name]));
   const marketOf = new Map(picked.map((m) => [m.stock_id, m.market]));
@@ -155,6 +157,16 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
         股號也可以（打 <strong>233</strong> 或 <strong>00878</strong>）。
         ↑↓ 選、Enter 加入、輸入框空的時候按倒退鍵移除最後一個。最多 {MAX} 檔。
       </p>
+
+      {empty && (
+        <p className="rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+          上面輸入股名或股號，選好之後按「查詢」。
+          <br />
+          <span className="text-xs text-zinc-400">
+            選好的清單會留在網址上，可以加書籤或分享。
+          </span>
+        </p>
+      )}
 
       {error && (
         <p className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm dark:border-red-800 dark:bg-red-950">
