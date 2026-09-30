@@ -394,8 +394,8 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <Field label="基準日">
             <select name="date" defaultValue={result?.tradeDate ?? ''} className={inputCls}>
               {dates.map((d) => (
-                <option key={d} value={d}>
-                  {d}
+                <option key={d.date} value={d.date}>
+                  {d.date}（{d.count.toLocaleString('zh-TW')} 檔）
                 </option>
               ))}
             </select>

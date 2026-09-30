@@ -584,20 +584,38 @@ function buildWhere(f: Filters, tradeDate: string): Where {
  * 收盤當天評價通常還沒發布，於是最新那天會出現「有收盤沒殖利率沒本益比」，
  * 它又是最新的、被當成預設基準日，畫面上那三欄就整排空白。
  *
- * 用「有沒有本益比」而不是筆數門檻，是因為門檻要訂多少沒有依據，
- * 而上市是最大的市場，它的評價資料到齊就代表這天的行情實質上完整了。
+ * 還要再加一道覆蓋度門檻：至少要有最佳日期的四分之一檔數。
+ * 回補是逐檔進行的，而「最近 61 個交易日」對冷門股來說是它自己的
+ * 最後 61 個有成交日，跨的日曆區間可能長達數年，於是會生出大量
+ * 只有兩三檔資料的日期。實測 1,075 個日期不到 10 檔，全部是這種。
+ * 選到那種日期畫面上只會跑出三檔，看起來像壞掉。
+ *
+ * 用相對門檻而不是固定值，是因為回補期間總檔數一直在變，
+ * 固定值訂多少都會在某個階段失準。
  */
-export async function getTradeDates(): Promise<string[]> {
-  const rows = await prisma.$queryRawUnsafe<{ d: string }[]>(
-    `SELECT to_char(d.trade_date, 'YYYY-MM-DD') AS d
-       FROM stock_daily d
-       JOIN stock s ON s.stock_id = d.stock_id
-      WHERE s.market = 'twse' AND d.per IS NOT NULL
-      GROUP BY d.trade_date
-      ORDER BY d.trade_date DESC
+export interface TradeDate {
+  date: string;
+  /** 這一天有資料的股票數。回補未完成時歷史日期會明顯偏少，標出來才不會誤判 */
+  count: number;
+}
+
+export async function getTradeDates(): Promise<TradeDate[]> {
+  const rows = await prisma.$queryRawUnsafe<{ d: string; n: number }[]>(
+    `WITH cov AS (
+       SELECT d.trade_date, count(*)::int AS n
+         FROM stock_daily d
+         JOIN stock s ON s.stock_id = d.stock_id
+        WHERE s.market = 'twse' AND d.per IS NOT NULL
+        GROUP BY d.trade_date
+     )
+     SELECT to_char(c.trade_date, 'YYYY-MM-DD') AS d,
+            (SELECT count(*)::int FROM stock_daily x WHERE x.trade_date = c.trade_date) AS n
+       FROM cov c
+      WHERE c.n >= 0.25 * (SELECT max(n) FROM cov)
+      ORDER BY c.trade_date DESC
       LIMIT 400`,
   );
-  return rows.map((r) => r.d);
+  return rows.map((r) => ({ date: r.d, count: r.n }));
 }
 
 export interface PeriodInfo {
@@ -726,9 +744,10 @@ export interface ScreenerResult {
  * dates 由呼叫端傳進來，不在這裡自己查。
  * 頁面本來就要拿交易日清單來畫下拉選單，函式內再查一次等於每次開頁多繞新加坡一趟。
  */
-export async function runScreener(f: Filters, dates: string[]): Promise<ScreenerResult | null> {
+export async function runScreener(f: Filters, dates: TradeDate[]): Promise<ScreenerResult | null> {
   if (dates.length === 0) return null;
-  const tradeDate = f.date && dates.includes(f.date) ? f.date : dates[0];
+  const known = dates.map((d) => d.date);
+  const tradeDate = f.date && known.includes(f.date) ? f.date : known[0];
 
   const where = buildWhere(f, tradeDate);
 
@@ -758,11 +777,12 @@ export async function runScreener(f: Filters, dates: string[]): Promise<Screener
 /** 匯出用：不分頁，一次拿全部（上限保護避免誤操作拉爆記憶體） */
 export async function runScreenerForExport(
   f: Filters,
-  dates: string[],
+  dates: TradeDate[],
   limit = 10_000,
 ): Promise<ScreenerRow[]> {
   if (dates.length === 0) return [];
-  const tradeDate = f.date && dates.includes(f.date) ? f.date : dates[0];
+  const known = dates.map((d) => d.date);
+  const tradeDate = f.date && known.includes(f.date) ? f.date : known[0];
   const where = buildWhere(f, tradeDate);
   return prisma.$queryRawUnsafe<ScreenerRow[]>(
     `SELECT ${SELECT_COLS} ${baseQuery(where, f)} LIMIT ${limit}`,

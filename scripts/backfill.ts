@@ -604,13 +604,14 @@ const CALLS_PER_HOUR = Number(flag('rate') ?? 560);
 /**
  * 單次執行要跑多久。
  *
- * GitHub Actions 單一 job 上限 6 小時，這裡抓 5.5 小時。
+ * 排程每 6 小時一次、job 逾時設 5 小時，這裡抓 4.7 小時，
+ * 讓腳本自己先跑完而不是被 GitHub 砍掉，log 才會有完整的結尾統計。
  * 一開始設計成「每小時一批」，但實測 GitHub 的排程根本沒有準時觸發——
  * workflow 設定完全正確卻連續三個小時一次都沒跑，官方文件也明說排程是
  * 盡力而為、高負載時會延遲甚至丟棄。
  * 與其依賴它每小時觸發，不如讓單次跑滿，少觸發幾次就少一次失敗機會。
  */
-const RUN_HOURS = Number(flag('hours') ?? 5.5);
+const RUN_HOURS = Number(flag('hours') ?? 4.7);
 /** 同一檔內連續兩次呼叫之間的間隔 */
 const CALL_GAP_MS = Math.round(3_600_000 / CALLS_PER_HOUR);
 

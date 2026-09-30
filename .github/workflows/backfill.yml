@@ -30,8 +30,11 @@ jobs:
     # 上傳 Release asset 需要寫入權限
     permissions:
       contents: write
-    # 腳本自己抓 5.5 小時，這裡留 20 分鐘給安裝與上傳
-    timeout-minutes: 350
+    # 排程每 6 小時一次，這裡設 5 小時，留 1 小時餘裕。
+    # 逾時會被標成 cancelled，那是正常的——進度記在 backfill_log，
+    # 下一輪接著跑。留餘裕是為了確保前一輪一定先結束，
+    # 兩輪重疊的話 FinMind 的呼叫速率會加倍而撞到額度上限。
+    timeout-minutes: 300
 
     steps:
       - uses: actions/checkout@v4
