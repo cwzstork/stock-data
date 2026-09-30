@@ -83,18 +83,20 @@
 
 <h1>台股篩選器 — 欄位說明</h1>
 <p class="lede">
-  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-09-29</strong>。<br>
+  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-09-30</strong>。<br>
   畫面上的欄位名都會標出時間基準——同一個指標在不同基準下差很多，
   台積電 <strong>ROE(近四季) 34.78%</strong> 與 <strong>ROE(累計年化) 39.77%</strong> 是同一天的兩個數字。
 </p>
 
 <div class="grid">
-  <div class="card"><b>13 MB</b><span>資料庫已用 / 512 MB</span>
-    <div class="bar"><i style="width:2.5%"></i></div></div>
-  <div class="card"><b>3,081</b><span>股票主檔</span></div>
-  <div class="card"><b>47</b><span>篩選器欄位數</span></div>
-  <div class="card"><b>560 / 4 / 6</b><span>回補進度：配息 / 年度 / 季報（共 3,081）</span></div>
-  <div class="card"><b>每 6 小時</b><span>回補排程，單次跑滿 5.5 小時</span></div>
+  <div class="card"><b>41.7 MB</b><span>資料庫已用 / 512 MB</span>
+    <div class="bar"><i style="width:8.1%"></i></div></div>
+  <div class="card"><b>3,081 / 3,081</b><span>配息回補　<strong style="color:#15803d">完成</strong></span>
+    <div class="bar"><i style="width:100%"></i></div></div>
+  <div class="card"><b>1,081 / 3,081</b><span>年度彙總回補　進行中</span>
+    <div class="bar"><i style="width:35%"></i></div></div>
+  <div class="card"><b>6 / 3,081</b><span>十年季報回補　排隊中</span>
+    <div class="bar"><i style="width:0.2%"></i></div></div>
 </div>
 
 <h2>一、時間基準：六種</h2>
@@ -140,7 +142,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <h3>日頻行情（7 欄）</h3>
 <div class="scroll"><table>
 <tr><th>欄位</th><th>涵蓋區間</th><th>說明</th></tr>
-<tr><td>收盤(當日)</td><td rowspan="6"><strong>2016-10-31 ~ 2026-09-29</strong><br>每月最後交易日 120 期<br>＋ 最近 61 個交易日<br><small>目前 178 個相異日期。回補完成後全市場都有</small></td><td>當日收盤價</td></tr>
+<tr><td>收盤(當日)</td><td rowspan="6"><strong>2015-01-05 ~ 2026-09-29</strong><br>每月最後交易日 120 期<br>＋ 最近 61 個交易日<br><small>已寫入 158,295 列。基準日下拉列出 178 個涵蓋度足夠的日期，<br>每個選項都標出該日檔數</small></td><td>當日收盤價</td></tr>
 <tr><td>成交量(當日,張)</td><td>資料庫存「股」，畫面除以 1000</td></tr>
 <tr><td>成交額(當日,千元)</td><td>資料庫存「元」</td></tr>
 <tr><td>殖利率(當日,交易所)%</td><td>交易所公告值。<strong>不含 ETF</strong>，除息後有更新延遲</td></tr>
@@ -177,7 +179,8 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td>每股淨值(2026-06-30)</td><td><span class="tag now">當期</span></td><td>母公司權益 ÷ 股數。與證交所公告同口徑（實測統一證 29.99、台積電 248.05 完全相同）</td></tr>
 <tr><td>財報期別</td><td>—</td><td>這一列用的是哪一期。空白代表沒有財報（ETF、興櫃）</td></tr>
 </table></div>
-<p>目前涵蓋 <strong>2015-03-31 ~ 2026-06-30</strong>（46 期），但只有 6 檔完成回補，其餘仍是舊的單期資料。</p>
+<p>涵蓋 <strong>2015-03-31 ~ 2026-06-30</strong>（46 期），但只有 <strong>6 / 3,081 檔</strong>完成回補，
+其餘仍是舊的單期資料。這個資料集排在年度彙總之後，預計 11 小時。</p>
 
 <div class="box bad">
 <p><strong>不是每個行業都有這些數字。</strong></p>
@@ -200,7 +203,9 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td>現金股利(5年均)</td><td><span class="tag y">5年</span></td><td>2021-01-01 ~ 2025-12-31</td><td>近 5 個完整年度的平均現金股利（元）</td></tr>
 <tr><td>連續配息(年)</td><td><span class="tag y">年</span></td><td>從 2025 往回數</td><td>一年沒配就停。<strong>上限 11 年</strong>，配息資料起點是 2015-06-16</td></tr>
 </table></div>
-<p>目前涵蓋 <strong>2015-06-16 ~ 2026-09-24</strong>，5,285 筆除息紀錄，回補 560 / 3,081 檔。</p>
+<p><strong style="color:#15803d">回補已完成（3,081 / 3,081 檔）。</strong>
+涵蓋 <strong>2015-04-23 ~ 2026-11-05</strong>，22,349 筆除息紀錄——
+最新一筆是已公告但尚未除息的未來日期，那些不會被算進殖利率。</p>
 
 <div class="box ok">
 <p><strong>為什麼自己算而不用交易所的殖利率？</strong>驗過 7 檔，6 檔與交易所完全吻合。差異的兩處都是自己算比較準：</p>
@@ -222,7 +227,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td><strong>便宜價(淨值法)</strong></td><td>當期 ＋ 近 5 年</td><td>每股淨值 × 近 5 年最低股價淨值比　<em>資產角度</em></td></tr>
 </table></div>
 <p>篩選欄「股價 ÷ 便宜價」取三者中<strong>最寬鬆</strong>的當門檻——三種假設本來就不會同時成立，取最嚴的幾乎篩不到東西。</p>
-<p>年度彙總涵蓋 <strong>2015 ~ 2026</strong> 年，目前只有 4 檔完成回補。</p>
+<p>年度彙總涵蓋 <strong>2015 ~ 2026</strong> 年，已回補 <strong>1,081 / 3,081 檔</strong>（9,361 列），進行中。</p>
 
 <h3>內部人持股（4 欄）</h3>
 <div class="scroll"><table>
@@ -243,9 +248,12 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 
 <div class="box bad">
 <p><strong>① 回補未完成前，大多數股票的進階欄位是空的。</strong></p>
-<p>季報 6 / 3,081、年度 4 / 3,081、配息 560 / 3,081。
+配息已完成，年度彙總 1,081 / 3,081、季報 6 / 3,081。
 在各自補到之前，該檔的單季／累計／成長率／近四季、
 5年10年歷史殖、最低本益比、便宜價都會留白。</p>
+<p>基準日下拉的每個選項都標出該日檔數（例如
+<code>2026-09-24（2,754 檔）</code>、<code>2026-09-23（857 檔）</code>），
+差距大是因為歷史日期目前只涵蓋已回補的股票，回補完成後會一起長上來。</p>
 </div>
 
 <div class="box bad">
@@ -272,45 +280,53 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 
 <div class="todo">
 <div class="done">
-  <h4>十年季報回補（已排入佇列）</h4>
-  <small>FinMind 每檔 2 次呼叫，實測一次拿 46 期（2015Q1~2026Q2）。進度 6 / 3,081，約 11 小時。</small>
-  <p>已解掉：單季數字、累計、近四季、單季年增率、歷史股本欄位。</p>
+  <h4>配息回補（3,081 / 3,081）</h4>
+  <small>2026-09-29 完成。22,349 筆除息紀錄，涵蓋 2015-04-23 ~ 2026-11-05。</small>
+  <p>解掉：年化殖利率、近12月股利、5年／10年均殖、連續配息年數，且涵蓋 ETF。</p>
+</div>
+<div class="done">
+  <h4>十年季報排入佇列</h4>
+  <small>程式已完成並驗證，排在年度彙總之後執行。</small>
+  <p>單季／累計／近四季／年增率的欄位與查詢都已上線，等資料補齊就會有值。</p>
 </div>
 <div>
-  <h4>1. 現金流量回補</h4>
-  <small>FinMind <code>TaiwanStockCashFlowsStatement</code>，每檔 1 次呼叫，實測 42 期。約 5.5 小時。</small>
-  <p>解掉 9 欄：營業活動現金流量、投資活動現金流量、自由現金流量（單季／累計／年度）。</p>
+  <h4>1. 等年度彙總跑完（1,081 / 3,081，約 7 小時）</h4>
+  <small>每檔 2 次 API 呼叫，同時產生 Parquet 與歷史日頻。</small>
+  <p>補齊後：5年／10年歷史殖、5年最低殖、5年最低PER、便宜價三式、
+  以及基準日下拉各日期的涵蓋檔數都會補滿。</p>
 </div>
 <div>
-  <h4>2. 完成進行中的回補</h4>
-  <small>配息 560、年度彙總 4、季報 6，各 3,081 檔。合計約 28 小時。</small>
-  <p><strong>原本設每小時 :30 觸發，實測連續三小時一次都沒跑。</strong>
-  設定完全正確（workflow state=active、預設分支、schedule 在 main 上），
-  純粹是 GitHub 的排程沒執行——官方文件明說排程是盡力而為，
-  整點與半點最壅塞，高負載時會延遲甚至整個丟棄。</p>
-  <p>已改成<strong>每 6 小時觸發一次、單次跑滿 5.5 小時</strong>（job 上限 6 小時），
-  分鐘選 :07 避開壅塞時段。觸發次數少一個數量級，錯過一次的代價也小得多。</p>
+  <h4>2. 等十年季報跑完（6 / 3,081，約 11 小時）</h4>
+  <small>每檔 2 次呼叫，一次拿 46 期（2015Q1~2026Q2）。</small>
+  <p>補齊後：單季／累計／近四季所有比率、三個年增率、近四季 EPS 與 ROE、
+  流動比、歷史股本都會有值。</p>
 </div>
 <div>
   <h4>3. 股本改接季報的歷史值</h4>
   <small>資料已經在 <code>stock_quarterly.capital_stock</code>，只差把畫面那一欄改指過去。</small>
-  <p>解掉限制 ②。等季報回補有一定覆蓋率再改比較有意義。</p>
+  <p>解掉限制 ②（股本的 look-ahead）。等季報有一定覆蓋率再改比較有意義。</p>
 </div>
 <div>
-  <h4>4. 年度財報值（2016 毛利率、2016 ROE…）</h4>
-  <small>季報回補完成後就能算——把該年四季加總即可，不用再抓資料。</small>
-  <p>同時可做 ROE 3 年／5 年／10 年平均。</p>
+  <h4>4. 年度財報值與 ROE 多年平均</h4>
+  <small>季報補完就能算——該年四季加總即可，<strong>不用再抓任何資料</strong>。</small>
+  <p>可做：2016 毛利率、2016 ROE 這類年度值，以及 ROE 3 年／5 年／10 年平均。</p>
 </div>
 <div>
-  <h4>5. Parquet 按年分檔（compaction）</h4>
-  <small>目前 Parquet 按股票分檔，查單檔十年只開 1 個檔，但查「2018-01-24 全市場」要開 3,081 個檔。</small>
+  <h4>5. 現金流量回補</h4>
+  <small>FinMind <code>TaiwanStockCashFlowsStatement</code>，每檔 1 次呼叫，實測 42 期。約 5.5 小時。</small>
+  <p>解掉 9 欄：營業活動／投資活動／自由現金流量（單季、累計、年度）。</p>
 </div>
 <div>
-  <h4>6. 定期修剪 stock_daily</h4>
-  <small>見下一節。容量接近上限時再做，預計一年多以後。</small>
+  <h4>6. Parquet 按年分檔（compaction）</h4>
+  <small>目前按股票分檔，查單檔十年只開 1 個檔，但查「2018-01-24 全市場」要開 3,081 個檔。</small>
+  <p>要支援全市場歷史掃描才需要，優先度低。</p>
 </div>
 <div>
-  <h4>7. 沒有免費來源，不會做</h4>
+  <h4>7. 定期修剪 stock_daily</h4>
+  <small>見下一節。依修正後的估算大約三年後才會需要。</small>
+</div>
+<div>
+  <h4>8. 沒有免費來源，不會做</h4>
   <ul>
     <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API</li>
     <li><strong>單一大股東的持股明細</strong>——只拿得到職稱為「大股東」者的合計</li>
@@ -320,29 +336,36 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 
 <h2>五、容量規劃</h2>
 
+<div class="box">
+<p><strong>先前的估算太保守，這裡是修正後的數字。</strong></p>
+<p>之前用「每列 330 bytes」推算，那是資料量還很少時量到的——
+索引與頁面的固定開銷佔比過高。現在 <code>stock_daily</code> 有 158,295 列，
+實測<strong>每列 176 bytes</strong>，開銷被攤平了。
+爆掉時間從原本估的 1.2 年改為<strong>約 3 年</strong>。</p>
+</div>
+
 <div class="scroll"><table>
 <tr><th>階段</th><th class="num">容量</th><th>說明</th></tr>
-<tr><td>目前</td><td class="num">13 MB</td><td>已用 2.5%</td></tr>
-<tr><td>＋ 歷史日頻</td><td class="num">+173 MB</td><td>548,418 列 × 330 bytes（實測）</td></tr>
-<tr><td>＋ 十年季報</td><td class="num">+36 MB</td><td>約 1,976 檔 × 46 期</td></tr>
-<tr><td>＋ 年度彙總、配息全量</td><td class="num">+19 MB</td><td></td></tr>
-<tr><td><strong>回補全部完成</strong></td><td class="num"><strong>約 240 MB</strong></td><td>剩餘 272 MB</td></tr>
-<tr><td>每日同步成長</td><td class="num">+0.9 MB／交易日</td><td>2,754 列 × 330 bytes</td></tr>
-<tr><td><strong>預估爆掉時間</strong></td><td class="num"><strong>約 1.2 年後</strong></td><td>272 ÷ 0.9 ≈ 300 個交易日</td></tr>
+<tr><td>目前</td><td class="num">41.7 MB</td><td>已用 8.1%。配息完成、年度 35%、季報 0.2%</td></tr>
+<tr><td>年度彙總補完（日頻一起長）</td><td class="num">約 +55 MB</td><td>日頻補到約 451,000 列 × 176 bytes</td></tr>
+<tr><td>十年季報補完</td><td class="num">約 +30 MB</td><td>3,081 檔 × 46 期</td></tr>
+<tr><td><strong>全部回補完成</strong></td><td class="num"><strong>約 120 MB</strong></td><td>剩餘約 390 MB</td></tr>
+<tr><td>每日同步成長</td><td class="num">+0.48 MB／交易日</td><td>2,754 列 × 176 bytes</td></tr>
+<tr><td><strong>預估爆掉時間</strong></td><td class="num"><strong>約 3 年後</strong></td><td>390 ÷ 0.48 ≈ 810 個交易日</td></tr>
 </table></div>
 
 <div class="todo">
 <div>
   <h4>方案 A：定期修剪 stock_daily <span class="tag" style="border-color:#4ade80;color:#15803d">推薦</span></h4>
   <p>保留「每月最後一個交易日 ＋ 最近 90 天」，中間逐日刪掉。每季跑一次，
-  容量<strong>穩定在 240 MB 左右不再成長</strong>。被刪的資料完整留在 Parquet。</p>
+  容量<strong>穩定在 120 MB 左右不再成長</strong>。被刪的資料完整留在 Parquet。</p>
   <p><small>成本：一支排程 SQL。不損失任何篩選能力。</small></p>
 </div>
 <div>
   <h4>方案 B：Parquet 完全分層</h4>
-  <p>資料庫只留最近 3 個月，容量降到約 80 MB。但線上查歷史基準日要在
+  <p>資料庫只留最近 3 個月，容量降到約 50 MB。但線上查歷史基準日要在
   Vercel function 裡跑 DuckDB 讀遠端 Parquet——冷啟動載二進位檔、
-  每次請求抓十幾 MB，體感會明顯變慢，且要先做完待辦第 5 項。</p>
+  每次請求抓十幾 MB，體感會明顯變慢，且要先做完待辦第 6 項。</p>
 </div>
 <div>
   <h4>方案 C：換或升級資料庫</h4>
