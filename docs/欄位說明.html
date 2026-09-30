@@ -131,7 +131,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 近四季＝最近四季加總；而單季要從累計相減，缺任何一期就算不出來。</p>
 </div>
 
-<h2>二、欄位總表（47 欄）</h2>
+<h2>二、欄位總表（51 欄）</h2>
 
 <h3>識別（4 欄）</h3>
 <div class="scroll"><table>
@@ -191,6 +191,35 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <li>金控的「營業收入」是<strong>淨收益</strong>（利息淨收益＋利息以外淨收益），
   與一般業的營業收入不是同一件事，跨行業比較要有警覺。</li>
 </ul>
+</div>
+
+<h3>月營收與自算預估（4 欄）</h3>
+<p>來自證交所 <code>t187ap05_L</code> 與櫃買 <code>mopsfin_t187ap05_O</code>（全市場各一次呼叫），
+歷史用 FinMind 逐檔回補。<strong>興櫃不強制公告月營收</strong>，所以那部分會是空的。</p>
+<div class="scroll"><table>
+<tr><th>欄位</th><th>基準</th><th>說明</th></tr>
+<tr><td>月營收年增(2026-08)%</td><td><span class="tag now">單月</span></td><td>最新已公布月份 vs 去年同月</td></tr>
+<tr><td>營收年增(2026年累計)%</td><td><span class="tag y">年初至今</span></td><td>今年累計 vs 去年同期累計</td></tr>
+<tr><td><strong>預估EPS(2026年,自算)</strong></td><td><span class="tag y">全年</span></td><td>見下方算式</td></tr>
+<tr><td><strong>保守預估EPS(2026年,自算)</strong></td><td><span class="tag y">全年</span></td><td>同上，保守情境</td></tr>
+</table></div>
+
+<div class="box ok">
+<p><strong>這是自己算的，不是法人估。</strong>法人預估 EPS 沒有免費來源——那是券商研究報告的產出，
+各財經網站是向資料商買來的。實測四個常見站台，公開頁面都沒有這個欄位
+（CMoney 的 18 種個股頁全掃過，「預估」「EPS」出現 0 次）。</p>
+<p>算式：</p>
+<pre style="font-size:12.5px;line-height:1.6;background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto">預估全年營收 = 已公布月份累計 + 剩餘月份（去年同期 × 今年累計成長倍數）
+預估 EPS     = 預估全年營收 × 淨利率 ÷ 已發行股數
+
+  基準版　淨利率用<b>近四季</b>
+  保守版　剩餘月份假設<b>零成長</b>（直接用去年同期），淨利率取<b>近八季單季最低</b></pre>
+<p>全年 12 個月都公布時，剩餘月份為 0，預估值自動收斂成實際值。</p>
+<p>實測台積電：累計營收年增 39.26%、近四季淨利率 50.4%
+→ 預估全年 EPS <strong>103.05</strong>、保守 <strong>78.35</strong>（近四季實際 86.28）。</p>
+<p>相對法人估，自算有兩個優勢：<strong>算式公開可檢驗</strong>，
+而且<strong>月營收有十年歷史所以可回測</strong>——這個推估法過去準不準是驗得出來的，
+法人估反而拿不到歷史預估值沒辦法驗。</p>
 </div>
 
 <h3>配息（6 欄）</h3>
@@ -312,23 +341,31 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   <p>可做：2016 毛利率、2016 ROE 這類年度值，以及 ROE 3 年／5 年／10 年平均。</p>
 </div>
 <div>
-  <h4>5. 現金流量回補</h4>
+  <h4>5. 十年月營收回補</h4>
+  <small>FinMind <code>TaiwanStockMonthRevenue</code>，每檔 1 次呼叫，實測 141 個月（2014-12 ~ 2026-08）。約 5.5 小時。</small>
+  <p>補齊後自算預估 EPS 才能回測——用過去某個時點的月營收去推估，
+  再跟後來實際公布的 EPS 對照，就知道這個算式準不準。</p>
+</div>
+<div>
+  <h4>6. 現金流量回補</h4>
   <small>FinMind <code>TaiwanStockCashFlowsStatement</code>，每檔 1 次呼叫，實測 42 期。約 5.5 小時。</small>
   <p>解掉 9 欄：營業活動／投資活動／自由現金流量（單季、累計、年度）。</p>
 </div>
 <div>
-  <h4>6. Parquet 按年分檔（compaction）</h4>
+  <h4>7. Parquet 按年分檔（compaction）</h4>
   <small>目前按股票分檔，查單檔十年只開 1 個檔，但查「2018-01-24 全市場」要開 3,081 個檔。</small>
   <p>要支援全市場歷史掃描才需要，優先度低。</p>
 </div>
 <div>
-  <h4>7. 定期修剪 stock_daily</h4>
+  <h4>8. 定期修剪 stock_daily</h4>
   <small>見下一節。依修正後的估算大約三年後才會需要。</small>
 </div>
 <div>
-  <h4>8. 沒有免費來源，不會做</h4>
+  <h4>9. 沒有免費來源，不會做</h4>
   <ul>
-    <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API</li>
+    <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API。
+      實測 CMoney、鉅亨、Yahoo、玩股網的公開頁面都沒有這個欄位。
+      <strong>已改用自算版本</strong>（見第二節），來源完全是官方公開資料。</li>
     <li><strong>單一大股東的持股明細</strong>——只拿得到職稱為「大股東」者的合計</li>
   </ul>
 </div>

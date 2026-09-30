@@ -206,3 +206,26 @@ export async function fetchBalanceSheetFull(
     start_date: startDate,
   });
 }
+
+export interface MonthRevenueRow {
+  date: string;
+  stock_id: string;
+  /** 單位：元 */
+  revenue: number;
+  revenue_month: number;
+  revenue_year: number;
+}
+
+/**
+ * 月營收（逐檔歷史）。FinMind 給的單位已經是元，不用再換算。
+ * 注意 date 是公告日附近的日期，要用 revenue_year / revenue_month 決定所屬月份。
+ */
+export async function fetchMonthRevenue(
+  stockId: string,
+  startDate: string,
+): Promise<MonthRevenueRow[]> {
+  return request<MonthRevenueRow>('TaiwanStockMonthRevenue', {
+    data_id: stockId,
+    start_date: startDate,
+  });
+}

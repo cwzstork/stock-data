@@ -64,6 +64,10 @@ export interface Filters {
   revYoyMin: number | null;
   /** 近四季 ROE 下限(%) */
   roeTtmMin: number | null;
+  /** 月營收年增下限(%) */
+  revMYoyMin: number | null;
+  /** 自算預估 EPS 下限 */
+  estEpsMin: number | null;
   /** 5 年歷史平均殖利率下限(%) */
   hy5Min: number | null;
   /** 10 年歷史平均殖利率下限(%) */
@@ -134,6 +138,19 @@ const RATIO = {
   cheap_per: `CASE WHEN ttm.quarters = 4 AND ttm.eps IS NOT NULL AND an.min_per5 IS NOT NULL
                 THEN ttm.eps * an.min_per5 END`,
   cheap_pbr: 'q.book_value_per_share * an.min_pbr5',
+  // 自算預估 EPS＝預估全年營收 × 淨利率 ÷ 股數
+  est_eps: `CASE WHEN cap.issued_shares > 0 AND ttm.quarters = 4 AND ttm.revenue > 0
+                  AND rev.ytd_ly > 0 AND rev.full_ly > 0 AND rev.months BETWEEN 1 AND 12
+              THEN (rev.ytd + (rev.full_ly - rev.ytd_ly) * (rev.ytd::numeric / rev.ytd_ly))
+                   * (ttm.net_income_parent::numeric / ttm.revenue)
+                   / cap.issued_shares
+            END`,
+  est_eps_low: `CASE WHEN cap.issued_shares > 0 AND ml.low_margin IS NOT NULL
+                      AND rev.ytd_ly > 0 AND rev.full_ly > 0 AND rev.months BETWEEN 1 AND 12
+                  THEN (rev.ytd + (rev.full_ly - rev.ytd_ly))
+                       * ml.low_margin
+                       / cap.issued_shares
+                END`,
   // 內部人持股比例。分母是已發行普通股數
   director_pct:
     'CASE WHEN cap.issued_shares > 0 THEN ins.director_shares * 100.0 / cap.issued_shares END',
@@ -144,6 +161,18 @@ const RATIO = {
   // 設質比例的分母是董監自己的持股，不是總股數
   pledge_pct:
     'CASE WHEN ins.director_shares > 0 THEN ins.director_pledged * 100.0 / ins.director_shares END',
+  // 月營收年增。分母為零或負數時算不出有意義的成長率，留空
+  rev_m_yoy:
+    'CASE WHEN rev.last_rev_ly > 0 THEN (rev.last_rev - rev.last_rev_ly) * 100.0 / rev.last_rev_ly END',
+  rev_ytd_yoy: 'CASE WHEN rev.ytd_ly > 0 THEN (rev.ytd - rev.ytd_ly) * 100.0 / rev.ytd_ly END',
+  // 預估全年營收＝已公布累計 ＋ 剩餘月份（去年同期 × 今年累計成長倍數）
+  est_revenue: `CASE WHEN rev.ytd_ly > 0 AND rev.full_ly > 0 AND rev.months BETWEEN 1 AND 12
+                  THEN rev.ytd + (rev.full_ly - rev.ytd_ly) * (rev.ytd::numeric / rev.ytd_ly)
+                END`,
+  // 保守版：剩餘月份假設零成長，直接用去年同期
+  est_revenue_low: `CASE WHEN rev.full_ly > 0 AND rev.ytd_ly > 0 AND rev.months BETWEEN 1 AND 12
+                      THEN rev.ytd + (rev.full_ly - rev.ytd_ly)
+                    END`,
   roe: `CASE WHEN q.equity_parent > 0
           THEN ytd.net_income_parent * 100.0 / q.equity_parent
                * (4.0 / EXTRACT(QUARTER FROM q.period_end))
@@ -192,6 +221,10 @@ const SORT_COLUMNS = {
   eps_ttm: RATIO.eps_ttm,
   roe_ttm: RATIO.roe_ttm,
   roa_ttm: RATIO.roa_ttm,
+  rev_m_yoy: RATIO.rev_m_yoy,
+  rev_ytd_yoy: RATIO.rev_ytd_yoy,
+  est_eps: RATIO.est_eps,
+  est_eps_low: RATIO.est_eps_low,
   hy5: 'an.hy5',
   hy10: 'an.hy10',
   min_per5: 'an.min_per5',
@@ -265,6 +298,8 @@ export function parseFilters(params: RawParams): Filters {
     cheapRatioMax: toNumber(toStr(params.cheapRatioMax)),
     revYoyMin: toNumber(toStr(params.revYoyMin)),
     roeTtmMin: toNumber(toStr(params.roeTtmMin)),
+    revMYoyMin: toNumber(toStr(params.revMYoyMin)),
+    estEpsMin: toNumber(toStr(params.estEpsMin)),
     hy5Min: toNumber(toStr(params.hy5Min)),
     hy10Min: toNumber(toStr(params.hy10Min)),
     minPer5Max: toNumber(toStr(params.minPer5Max)),
@@ -328,6 +363,12 @@ export interface ScreenerRow {
   roe_ttm: string | null;
   roa_ttm: string | null;
   quarters_ttm: string | null;
+  rev_month: string | null;
+  rev_months_done: string | null;
+  rev_m_yoy: string | null;
+  rev_ytd_yoy: string | null;
+  est_eps: string | null;
+  est_eps_low: string | null;
 }
 
 /**
@@ -492,6 +533,57 @@ const INSIDER_LATERAL = `
      LIMIT 1
   ) ins ON true`;
 
+/**
+ * 月營收彙總與自算預估 EPS。
+ *
+ * 法人預估 EPS 沒有免費來源（那是券商研究報告的產出，各財經網站是向資料商
+ * 買來的）。但月營收是官方每月公告的免費資料，用它自己推估反而有兩個好處：
+ * 算式公開可檢驗，而且月營收有十年歷史，這個推估法準不準是可以回測的。
+ *
+ * 推估方式：
+ *   已公布月份用實際值，剩餘月份用「去年同期 × 今年累計成長率」補完，
+ *   再乘上淨利率、除以股數。
+ *
+ *   基準：成長率用今年累計年增率，淨利率用近四季
+ *   保守：假設剩餘月份零成長（就等於去年同期），淨利率取近八季單季最低
+ *
+ * 全年 12 個月都公布時，剩餘月份為 0，預估值自動收斂成實際值。
+ */
+const REVENUE_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT rr.month
+      FROM stock_revenue rr
+     WHERE rr.stock_id = d.stock_id AND rr.month <= d.trade_date
+     ORDER BY rr.month DESC
+     LIMIT 1
+  ) rvm ON true
+  LEFT JOIN LATERAL (
+    SELECT
+      sum(r.revenue) FILTER (WHERE extract(year from r.month) = extract(year from rvm.month))
+        AS ytd,
+      count(*) FILTER (WHERE extract(year from r.month) = extract(year from rvm.month))
+        AS months,
+      sum(r.revenue) FILTER (WHERE extract(year from r.month) = extract(year from rvm.month) - 1
+                               AND extract(month from r.month) <= extract(month from rvm.month))
+        AS ytd_ly,
+      sum(r.revenue) FILTER (WHERE extract(year from r.month) = extract(year from rvm.month) - 1)
+        AS full_ly,
+      max(r.revenue) FILTER (WHERE r.month = rvm.month) AS last_rev,
+      max(r.revenue) FILTER (WHERE r.month = (rvm.month - interval '1 year')::date)
+        AS last_rev_ly
+      FROM stock_revenue r
+     WHERE r.stock_id = d.stock_id AND r.month <= d.trade_date
+  ) rev ON true
+  -- 近八季裡最差的那一季淨利率，當作保守情境的獲利能力
+  LEFT JOIN LATERAL (
+    SELECT min(CASE WHEN z.revenue > 0 THEN z.net_income_parent * 1.0 / z.revenue END) AS low_margin
+      FROM (
+        SELECT * FROM stock_quarterly q8
+         WHERE q8.stock_id = d.stock_id AND q8.period_end <= d.trade_date
+         ORDER BY q8.period_end DESC LIMIT 8
+      ) z
+  ) ml ON true`;
+
 interface Where {
   sql: string;
   values: unknown[];
@@ -552,6 +644,8 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.pledgeMax !== null) add(`(${RATIO.pledge_pct}) <= ?`, f.pledgeMax);
   if (f.revYoyMin !== null) add(`(${RATIO.rev_yoy}) >= ?`, f.revYoyMin);
   if (f.roeTtmMin !== null) add(`(${RATIO.roe_ttm}) >= ?`, f.roeTtmMin);
+  if (f.revMYoyMin !== null) add(`(${RATIO.rev_m_yoy}) >= ?`, f.revMYoyMin);
+  if (f.estEpsMin !== null) add(`(${RATIO.est_eps}) >= ?`, f.estEpsMin);
   // 三種便宜價取最寬鬆的一個當門檻：只要對其中一種來說夠便宜就算數。
   // 用最嚴格的會幾乎篩不到東西，三種假設本來就不會同時成立。
   if (f.cheapRatioMax !== null) {
@@ -627,6 +721,8 @@ export interface PeriodInfo {
   capitalDate: string | null;
   /** 內部人持股資料的所屬月份 */
   insiderDate: string | null;
+  /** 最新已公布月營收的月份 YYYY-MM */
+  revenueMonth: string | null;
 }
 
 /**
@@ -638,14 +734,16 @@ export interface PeriodInfo {
  */
 export async function getPeriodInfo(tradeDate: string): Promise<PeriodInfo> {
   const [r] = await prisma.$queryRawUnsafe<
-    { q: string | null; cap: string | null; ins: string | null }[]
+    { q: string | null; cap: string | null; ins: string | null; rev: string | null }[]
   >(
     `SELECT (SELECT to_char(max(period_end), 'YYYY-MM-DD') FROM stock_quarterly
               WHERE period_end <= $1::date) AS q,
             (SELECT to_char(max(report_date), 'YYYY-MM-DD') FROM stock_capital
               WHERE report_date <= $1::date + 30) AS cap,
             (SELECT to_char(max(period_end), 'YYYY-MM-DD') FROM stock_insider
-              WHERE period_end <= $1::date) AS ins`,
+              WHERE period_end <= $1::date) AS ins,
+            (SELECT to_char(max(month), 'YYYY-MM') FROM stock_revenue
+              WHERE month <= $1::date) AS rev`,
     tradeDate,
   );
   const quarterEnd = r?.q ?? null;
@@ -654,6 +752,7 @@ export async function getPeriodInfo(tradeDate: string): Promise<PeriodInfo> {
     quarter: quarterEnd ? Math.ceil(Number(quarterEnd.slice(5, 7)) / 3) : null,
     capitalDate: r?.cap ?? null,
     insiderDate: r?.ins ?? null,
+    revenueMonth: r?.rev ?? null,
   };
 }
 
@@ -713,7 +812,13 @@ const SELECT_COLS = `
   round((${RATIO.eps_ttm})::numeric, 2)::text        AS eps_ttm,
   round((${RATIO.roe_ttm})::numeric, 2)::text        AS roe_ttm,
   round((${RATIO.roa_ttm})::numeric, 2)::text        AS roa_ttm,
-  ttm.quarters::text                                 AS quarters_ttm`;
+  ttm.quarters::text                                 AS quarters_ttm,
+  to_char(rvm.month, 'YYYY-MM')                      AS rev_month,
+  rev.months::text                                   AS rev_months_done,
+  round((${RATIO.rev_m_yoy})::numeric, 2)::text      AS rev_m_yoy,
+  round((${RATIO.rev_ytd_yoy})::numeric, 2)::text    AS rev_ytd_yoy,
+  round((${RATIO.est_eps})::numeric, 2)::text        AS est_eps,
+  round((${RATIO.est_eps_low})::numeric, 2)::text    AS est_eps_low`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
@@ -728,6 +833,7 @@ function baseQuery(where: Where, f: Filters) {
     ${DIVIDEND_LATERAL}
     ${ANNUAL_LATERAL}
     ${INSIDER_LATERAL}
+    ${REVENUE_LATERAL}
    WHERE ${where.sql}
    ORDER BY ${SORT_COLUMNS[f.sort]} ${f.dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, s.stock_id ASC`;
 }
@@ -759,6 +865,7 @@ export async function runScreener(f: Filters, dates: TradeDate[]): Promise<Scree
     ${DIVIDEND_LATERAL}
     ${ANNUAL_LATERAL}
     ${INSIDER_LATERAL}
+    ${REVENUE_LATERAL}
    WHERE ${where.sql}`;
   const [{ n: total }] = await prisma.$queryRawUnsafe<{ n: number }[]>(countSql, ...where.values);
 

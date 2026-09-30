@@ -131,6 +131,7 @@ function buildColumns(p: {
   quarterEnd: string | null;
   capitalDate: string | null;
   insiderDate: string | null;
+  revenueMonth: string | null;
 }): {
   key: SortKey | null;
   label: string;
@@ -142,6 +143,9 @@ function buildColumns(p: {
   const qe = p.quarterEnd ?? '財報期末';
   const cap = p.capitalDate ?? '公告日';
   const ins = p.insiderDate ? p.insiderDate.slice(0, 7) : '公告月';
+  const rm = p.revenueMonth ?? '最新月';
+  // 預估的是「最新已公布月營收所屬年度」的全年 EPS
+  const estYear = p.revenueMonth ? `${p.revenueMonth.slice(0, 4)}年` : '年';
   return [
   { key: 'stock_id', label: '股號' },
   { key: null, label: '股名' },
@@ -176,6 +180,11 @@ function buildColumns(p: {
   { key: 'eps', label: 'EPS(單季3個月)', right: true },
   { key: 'eps_ttm', label: 'EPS(近四季12個月)', right: true },
   { key: 'bvps', label: `每股淨值(${qe})`, right: true },
+
+  { key: 'rev_m_yoy', label: `月營收年增(${rm})%`, right: true },
+  { key: 'rev_ytd_yoy', label: `營收年增(${estYear}累計)%`, right: true },
+  { key: 'est_eps', label: `預估EPS(${estYear},自算)`, right: true },
+  { key: 'est_eps_low', label: `保守預估EPS(${estYear},自算)`, right: true },
 
   { key: 'ttm_yield', label: '年化殖利率(近12月)%', right: true },
   { key: 'ttm_cash', label: '現金股利(近12月)', right: true },
@@ -246,6 +255,11 @@ function Row({ r }: { r: ScreenerRow }) {
       {nb(r.eps_ttm)}
       {n(r.bvps)}
 
+      {n(r.rev_m_yoy)}
+      {n(r.rev_ytd_yoy)}
+      {nb(r.est_eps)}
+      {nb(r.est_eps_low)}
+
       {nb(r.ttm_yield)}
       {n(r.ttm_cash)}
       {n(r.yield5)}
@@ -313,6 +327,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
     quarterEnd: period?.quarterEnd ?? null,
     capitalDate: period?.capitalDate ?? null,
     insiderDate: period?.insiderDate ?? null,
+    revenueMonth: period?.revenueMonth ?? null,
   });
 
   // 目前畫面上的條件，原樣拿來存或分享
@@ -470,6 +485,16 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
               placeholder="例：150" className={inputCls} />
           </Field>
 
+          <Field label="月營收年增下限 (%)">
+            <input type="number" step="any" name="revMYoyMin" defaultValue={f.revMYoyMin ?? ''}
+              placeholder="例：20" className={inputCls} />
+          </Field>
+
+          <Field label="預估EPS 下限（自算）">
+            <input type="number" step="any" name="estEpsMin" defaultValue={f.estEpsMin ?? ''}
+              placeholder="例：5" className={inputCls} />
+          </Field>
+
           <Field label="ROA 年化下限 (%)">
             <input type="number" step="any" name="roaMin" defaultValue={f.roaMin ?? ''}
               placeholder="例：8" className={inputCls} />
@@ -608,7 +633,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           )}
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[5200px] text-sm">
+            <table className="w-full min-w-[5800px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {COLUMNS.map((c) => (
@@ -671,6 +696,13 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
             問的是「用今天的價格買，領過去的平均股利有多少報酬」。
             5年／10年<strong>歷史殖</strong> = 每年股利 ÷ <strong>當年均價</strong>再平均，
             問的是「過去這幾年買的人平均領到多少」。那一年沒配息就算 0%。
+            <br />
+            <strong>預估EPS 是自己算的，不是法人估。</strong>法人預估沒有免費來源，
+            所以改用官方每月公告的月營收推估：已公布月份用實際值，剩餘月份用
+            「去年同期 × 今年累計成長率」補完，再乘上淨利率、除以股數。
+            基準版的淨利率用近四季；保守版假設剩餘月份零成長、淨利率取近八季單季最低。
+            全年 12 個月都公布時，預估值會自動收斂成實際值。
+            算式公開，而且月營收有十年歷史，這個推估法準不準是可以回測的。
             <br />
             <strong>便宜價</strong>三欄的假設不同：股利法＝近5年平均股利 ÷ 5%；
             本益比法＝年化EPS × 近5年最低本益比；淨值法＝每股淨值 × 近5年最低股價淨值比。

@@ -30,6 +30,7 @@ model Stock {
   dividend  StockDividend[]
   annual    StockAnnual[]
   insider   StockInsider[]
+  revenue   StockRevenue[]
 
   @@index([market])
   @@index([industry])
@@ -274,4 +275,24 @@ model StockInsider {
   @@id([stockId, periodEnd])
   @@index([periodEnd])
   @@map("stock_insider")
+}
+
+/// 月營收
+/// 來源：證交所 t187ap05_L ＋ 櫃買 mopsfin_t187ap05_O（全市場各一次呼叫）
+///       歷史用 FinMind TaiwanStockMonthRevenue 逐檔回補
+///
+/// 這是台股唯一每月更新的官方經營數字，也是自算預估 EPS 的主要輸入。
+/// 興櫃不強制公告，所以只有上市與上櫃。
+model StockRevenue {
+  stockId String   @map("stock_id") @db.VarChar(10)
+  /// 所屬月份的 1 日。2026 年 8 月 → 2026-08-01
+  month   DateTime @db.Date
+  /// 當月營收，單位：元（證交所給千元，寫入時 ×1000）
+  revenue BigInt
+
+  stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
+
+  @@id([stockId, month])
+  @@index([month])
+  @@map("stock_revenue")
 }

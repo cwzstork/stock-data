@@ -22,6 +22,7 @@ import {
   fetchPriceHistory,
   fetchStatements,
   fetchBalanceSheetFull,
+  fetchMonthRevenue,
   type DividendRow,
   type StatementRow,
   type PerRow,
@@ -582,6 +583,38 @@ async function runQuarterly(stockId: string) {
   };
 }
 
+// ── 資料集：月營收 ────────────────────────────────────────────────
+
+async function runRevenue(stockId: string) {
+  const raw = await fetchMonthRevenue(stockId, START_DATE);
+  const rows = raw
+    .filter((r) => r.revenue_year > 0 && r.revenue_month >= 1 && r.revenue_month <= 12)
+    .map((r) => ({
+      // FinMind 的 date 是公告日附近，不是所屬月份，要用 revenue_year/month 決定
+      month: `${r.revenue_year}-${String(r.revenue_month).padStart(2, '0')}-01`,
+      revenue: num(r.revenue),
+    }))
+    .filter((r) => r.revenue !== null);
+
+  if (!COMMIT || rows.length === 0) return { rows: rows.length, dropped: 0, conflicts: [], note: '' };
+
+  const c = cols(rows, [() => stockId, (r) => r.month, (r) => r.revenue]);
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO stock_revenue (stock_id, month, revenue)
+     SELECT id, m::date, rev::bigint
+       FROM UNNEST($1::text[], $2::text[], $3::text[]) AS x(id, m, rev)
+     ON CONFLICT (stock_id, month) DO UPDATE SET revenue = EXCLUDED.revenue`,
+    ...c,
+  );
+  const last = rows[rows.length - 1];
+  return {
+    rows: rows.length,
+    dropped: 0,
+    conflicts: [],
+    note: `${rows[0].month.slice(0, 7)} ~ ${last.month.slice(0, 7)}`,
+  };
+}
+
 // ── 資料集登記 ────────────────────────────────────────────────────
 
 interface Dataset {
@@ -596,6 +629,7 @@ const DATASETS: Dataset[] = [
   { key: 'dividend', label: '配息紀錄', calls: 1, run: runDividend },
   { key: 'annual', label: '年度彙總', calls: 2, run: runAnnual },
   { key: 'quarterly', label: '十年季報', calls: 2, run: runQuarterly },
+  { key: 'revenue', label: '十年月營收', calls: 1, run: runRevenue },
 ];
 
 /** FinMind register 層的文件額度是 600 次/小時，留一點餘裕給每日同步 */

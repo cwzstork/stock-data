@@ -322,3 +322,54 @@ export async function fetchInsiderHoldings(): Promise<InsiderHolding[]> {
     })
     .sort((a, b) => a.stockId.localeCompare(b.stockId));
 }
+
+// ── 月營收 ───────────────────────────────────────────────────────
+
+export interface MonthlyRevenue {
+  stockId: string;
+  /** 所屬月份的 1 日 */
+  month: string;
+  /** 當月營收，單位：元 */
+  revenue: string;
+}
+
+/**
+ * 全市場月營收（上市與上櫃各一次呼叫）。
+ *
+ * 興櫃不強制公告月營收，所以沒有對應的 endpoint（_R 回 302）。
+ * 上游單位是千元，這裡 ×1000 存成元，跟其他表一致。
+ */
+export async function fetchMonthlyRevenue(): Promise<MonthlyRevenue[]> {
+  type Row = {
+    '資料年月': string;
+    '公司代號': string;
+    '營業收入-當月營收': string;
+  };
+
+  const [twse, tpex] = await Promise.all([
+    getJson<Row>('上市月營收', 'https://openapi.twse.com.tw/v1/opendata/t187ap05_L'),
+    getJson<Row>('上櫃月營收', 'https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O'),
+  ]);
+
+  const out: MonthlyRevenue[] = [];
+  for (const r of [...twse, ...tpex]) {
+    const stockId = String(r['公司代號'] ?? '').trim();
+    const ym = String(r['資料年月'] ?? '').trim();
+    if (!stockId || !/^\d{5,6}$/.test(ym)) continue;
+    const year = Number(ym.slice(0, -2)) + 1911;
+    const month = Number(ym.slice(-2));
+    if (month < 1 || month > 12) continue;
+
+    const raw = num(r['營業收入-當月營收']);
+    if (raw === null) continue;
+    // 千元 → 元。用 BigInt 避免大額營收在 JS number 失去精度
+    const revenue = BigInt(Math.round(Number(raw) * 1000)).toString();
+
+    out.push({
+      stockId,
+      month: `${year}-${String(month).padStart(2, '0')}-01`,
+      revenue,
+    });
+  }
+  return out;
+}

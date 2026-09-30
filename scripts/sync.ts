@@ -20,12 +20,14 @@ import {
   fetchCompanyProfiles,
   fetchEmergingQuotes,
   fetchInsiderHoldings,
+  fetchMonthlyRevenue,
   fetchTpexQuotes,
   fetchTpexValuation,
   fetchTwseQuotes,
   fetchTwseValuation,
   type DailyQuote,
   type InsiderHolding,
+  type MonthlyRevenue,
   type Valuation,
 } from '../src/lib/twse';
 
@@ -178,11 +180,29 @@ async function upsertInsider(tx: Tx, rows: InsiderHolding[]) {
   return n;
 }
 
+async function upsertRevenue(tx: Tx, rows: MonthlyRevenue[]) {
+  let n = 0;
+  for (const part of chunks(rows)) {
+    const [a, b, c] = columns(part, [(r) => r.stockId, (r) => r.month, (r) => r.revenue]);
+    n += await tx.$executeRawUnsafe(
+      `INSERT INTO stock_revenue (stock_id, month, revenue)
+       SELECT id, m::date, rev::bigint
+         FROM UNNEST($1::text[], $2::text[], $3::text[]) AS x(id, m, rev)
+       ON CONFLICT (stock_id, month) DO UPDATE SET revenue = EXCLUDED.revenue`,
+      a,
+      b,
+      c,
+    );
+  }
+  return n;
+}
+
 const COUNT_SQL = `SELECT 'stock' AS t, count(*) AS n FROM stock
    UNION ALL SELECT 'stock_daily', count(*) FROM stock_daily
    UNION ALL SELECT 'stock_capital', count(*) FROM stock_capital
    UNION ALL SELECT 'stock_quarterly', count(*) FROM stock_quarterly
-   UNION ALL SELECT 'stock_insider', count(*) FROM stock_insider`;
+   UNION ALL SELECT 'stock_insider', count(*) FROM stock_insider
+   UNION ALL SELECT 'stock_revenue', count(*) FROM stock_revenue`;
 
 async function main() {
   const t0 = Date.now();
@@ -190,10 +210,11 @@ async function main() {
 
   // ── 1. 抓資料 ───────────────────────────────────────────────
   console.log('[1/5] 抓取來源資料…');
-  const [info, profiles, insiders, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
+  const [info, profiles, insiders, revenues, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
     fetchStockInfo(),
     fetchCompanyProfiles(),
     fetchInsiderHoldings(),
+    fetchMonthlyRevenue(),
     fetchTwseQuotes(),
     fetchTwseValuation(),
     fetchTpexQuotes(),
@@ -206,6 +227,7 @@ async function main() {
   console.log(`  上櫃 行情/評價                 ${tpexQ.length} / ${tpexV.length}`);
   console.log(`  興櫃 行情                      ${esbQ.length}`);
   console.log(`  內部人持股                     ${insiders.length} 筆`);
+  console.log(`  月營收                         ${revenues.length} 筆`);
 
   // ── 2. 合併行情與評價 ────────────────────────────────────────
   console.log('\n[2/5] 合併行情與評價…');
@@ -268,7 +290,10 @@ async function main() {
 
   // 內部人持股有外鍵指向 stock，主檔沒有的（少數公開發行但未上市櫃）要濾掉
   const insiderRows = insiders.filter((i) => known.has(i.stockId));
+  const revenueRows = revenues.filter((r) => known.has(r.stockId));
   console.log(`  內部人可寫入                   ${insiderRows.length} 筆`);
+  const months = [...new Set(revenueRows.map((r) => r.month))].sort();
+  console.log(`  月營收可寫入                   ${revenueRows.length} 筆（月份 ${months.join(', ')}）`);
 
   // ── 4. 主檔 ─────────────────────────────────────────────────
   const stockRows = info.map((r) => ({
@@ -292,10 +317,12 @@ async function main() {
         const d = await upsertDaily(tx, merged);
         const c = await upsertCapital(tx, capitalRows);
         const ins = await upsertInsider(tx, insiderRows);
+        const rev = await upsertRevenue(tx, revenueRows);
         console.log(`  stock            寫入 ${s} 列`);
         console.log(`  stock_daily      寫入 ${d} 列`);
         console.log(`  stock_capital    寫入 ${c} 列`);
         console.log(`  stock_insider    寫入 ${ins} 列`);
+        console.log(`  stock_revenue    寫入 ${rev} 列`);
 
         const inTx = await tx.$queryRawUnsafe<{ t: string; n: bigint }[]>(COUNT_SQL);
         console.log('  交易內表列數：', inTx.map((r) => `${r.t}=${r.n}`).join('  '));
