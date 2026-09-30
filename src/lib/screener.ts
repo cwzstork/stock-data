@@ -74,6 +74,8 @@ export interface Filters {
   hy10Min: number | null;
   /** 近 5 年最低本益比上限 */
   minPer5Max: number | null;
+  /** 年度 EPS 連續成長年數下限（3 / 5 / 10）*/
+  epsGrowMin: number | null;
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -228,6 +230,8 @@ const SORT_COLUMNS = {
   hy5: 'an.hy5',
   hy10: 'an.hy10',
   min_per5: 'an.min_per5',
+  eps_grow: 'eg.streak',
+  eps_year: 'eg.last_eps',
 } as const;
 
 export type SortKey = keyof typeof SORT_COLUMNS;
@@ -303,6 +307,7 @@ export function parseFilters(params: RawParams): Filters {
     hy5Min: toNumber(toStr(params.hy5Min)),
     hy10Min: toNumber(toStr(params.hy10Min)),
     minPer5Max: toNumber(toStr(params.minPer5Max)),
+    epsGrowMin: toNumber(toStr(params.epsGrowMin)),
     sort,
     dir: toStr(params.dir) === 'asc' ? 'asc' : 'desc',
     page: Math.max(1, toNumber(toStr(params.page)) ?? 1),
@@ -369,6 +374,14 @@ export interface ScreenerRow {
   rev_ytd_yoy: string | null;
   est_eps: string | null;
   est_eps_low: string | null;
+  /** 年度 EPS 連續成長年數 */
+  eps_grow: string | null;
+  /** 最新一個「四季齊全」的年度，例如 2025 */
+  eps_year_last: string | null;
+  /** 該年度的 EPS（四季加總） */
+  eps_year: string | null;
+  /** 前一年度的 EPS，讓成長幅度看得出來 */
+  eps_year_prev: string | null;
 }
 
 /**
@@ -519,6 +532,47 @@ const ANNUAL_LATERAL = `
   ) an ON true`;
 
 /**
+ * 年度 EPS 連續成長年數。
+ *
+ * 資料庫存的是單季 EPS，年度 EPS＝該年四季加總，不落地、查詢時現算。
+ * 只採「四季齊全且四季都有 EPS」的年度——少一季就會把該年低估，
+ * 而低估的那年會假裝成「衰退」，把後面真正的連續紀錄硬生生切斷。
+ *
+ * 算法：年份由新到舊排，idx 是名次（最新年 = 0）。
+ * 每年標記「有沒有比前一年成長」，streak 就是「第一個沒成長的名次」
+ * ——也就是從最新年往回數連續成長了幾次。
+ * 最舊那年沒有前一年可比，coalesce 成 false，所以 min(idx) 一定找得到值。
+ *
+ * 判定用嚴格大於，持平不算成長（實測統一證 2024、2025 都是 3.00，判 0）。
+ * 年份不連續也不算（yr = 前一年 + 1），否則中間缺一年會被誤當成長。
+ *
+ * 這是純數值比較：EPS 從 -5 到 -3 也算成長一年。
+ * 要排除虧損公司，另外加「EPS(近四季) >= 0」之類的條件。
+ */
+const EPS_GROWTH_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT min(idx) FILTER (WHERE NOT grew)::int AS streak,
+           max(yr)  FILTER (WHERE idx = 0)       AS last_year,
+           max(eps) FILTER (WHERE idx = 0)       AS last_eps,
+           max(eps) FILTER (WHERE idx = 1)       AS prev_eps,
+           count(*)::int                         AS years
+      FROM (
+        SELECT yr, eps,
+               (row_number() OVER (ORDER BY yr DESC) - 1)::int AS idx,
+               coalesce(eps > lag(eps) OVER (ORDER BY yr)
+                        AND yr = lag(yr) OVER (ORDER BY yr) + 1, false) AS grew
+          FROM (
+            SELECT extract(year from e.period_end)::int AS yr, sum(e.eps) AS eps
+              FROM stock_quarterly e
+             WHERE e.stock_id = d.stock_id
+               AND e.period_end <= d.trade_date
+             GROUP BY 1
+            HAVING count(*) = 4 AND count(e.eps) = 4
+          ) a
+      ) b
+  ) eg ON true`;
+
+/**
  * 內部人持股。取交易日之前最新公告的那個月。
  *
  * 比例的分母用「已發行普通股數」，不是股本除以 10——
@@ -638,6 +692,9 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.hy5Min !== null) add('an.hy5 >= ?', f.hy5Min);
   if (f.hy10Min !== null) add('an.hy10 >= ?', f.hy10Min);
   if (f.minPer5Max !== null) add('an.min_per5 <= ?', f.minPer5Max);
+  // 連續成長 N 年需要 N+1 個完整年度才判斷得出來。資料不足時 eg.streak 是 NULL，
+  // 比較結果也是 NULL、不會通過——正是要的行為：判斷不出來的不要混進結果。
+  if (f.epsGrowMin !== null) add('eg.streak >= ?', f.epsGrowMin);
   if (f.crMin !== null) add(`(${RATIO.current_ratio}) >= ?`, f.crMin);
   if (f.roaMin !== null) add(`(${RATIO.roa}) >= ?`, f.roaMin);
   if (f.dirMin !== null) add(`(${RATIO.director_pct}) >= ?`, f.dirMin);
@@ -723,6 +780,8 @@ export interface PeriodInfo {
   insiderDate: string | null;
   /** 最新已公布月營收的月份 YYYY-MM */
   revenueMonth: string | null;
+  /** 最新一個「四季齊全」的年度，EPS(年) 那幾欄的標題用它 */
+  epsYear: number | null;
 }
 
 /**
@@ -734,7 +793,13 @@ export interface PeriodInfo {
  */
 export async function getPeriodInfo(tradeDate: string): Promise<PeriodInfo> {
   const [r] = await prisma.$queryRawUnsafe<
-    { q: string | null; cap: string | null; ins: string | null; rev: string | null }[]
+    {
+      q: string | null;
+      cap: string | null;
+      ins: string | null;
+      rev: string | null;
+      eps_year: string | null;
+    }[]
   >(
     `SELECT (SELECT to_char(max(period_end), 'YYYY-MM-DD') FROM stock_quarterly
               WHERE period_end <= $1::date) AS q,
@@ -743,7 +808,18 @@ export async function getPeriodInfo(tradeDate: string): Promise<PeriodInfo> {
             (SELECT to_char(max(period_end), 'YYYY-MM-DD') FROM stock_insider
               WHERE period_end <= $1::date) AS ins,
             (SELECT to_char(max(month), 'YYYY-MM') FROM stock_revenue
-              WHERE month <= $1::date) AS rev`,
+              WHERE month <= $1::date) AS rev,
+            -- 年度 EPS 要四季齊全才算得出來，所以最新完整年度不是「今年」
+            -- 也不一定是「去年」——取真的有四季資料的最大年份。
+            (SELECT max(yr)::text FROM (
+               -- 要按「股票 × 年度」分組，不能只按年度：
+               -- 只按年度的話 2025 在全市場有數千列，count(*) = 4 永遠不成立，
+               -- 整欄標題會安靜退回成「最新完整年」而不報錯。
+               SELECT stock_id, extract(year from period_end)::int AS yr
+                 FROM stock_quarterly
+                WHERE period_end <= $1::date AND eps IS NOT NULL
+                GROUP BY 1, 2 HAVING count(*) = 4
+             ) t) AS eps_year`,
     tradeDate,
   );
   const quarterEnd = r?.q ?? null;
@@ -753,6 +829,7 @@ export async function getPeriodInfo(tradeDate: string): Promise<PeriodInfo> {
     capitalDate: r?.cap ?? null,
     insiderDate: r?.ins ?? null,
     revenueMonth: r?.rev ?? null,
+    epsYear: r?.eps_year ? Number(r.eps_year) : null,
   };
 }
 
@@ -818,14 +895,17 @@ const SELECT_COLS = `
   round((${RATIO.rev_m_yoy})::numeric, 2)::text      AS rev_m_yoy,
   round((${RATIO.rev_ytd_yoy})::numeric, 2)::text    AS rev_ytd_yoy,
   round((${RATIO.est_eps})::numeric, 2)::text        AS est_eps,
-  round((${RATIO.est_eps_low})::numeric, 2)::text    AS est_eps_low`;
+  round((${RATIO.est_eps_low})::numeric, 2)::text    AS est_eps_low,
+  eg.streak::text                                    AS eps_grow,
+  eg.last_year::text                                 AS eps_year_last,
+  round(eg.last_eps, 2)::text                        AS eps_year,
+  round(eg.prev_eps, 2)::text                        AS eps_year_prev`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
  * 讓 Decimal / BigInt 在驅動層做隱式轉換，成交金額這種量級會有精度風險。
  */
-function baseQuery(where: Where, f: Filters) {
-  return `
+const FROM_CLAUSE = `
     FROM stock_daily d
     JOIN stock s ON s.stock_id = d.stock_id
     ${CAPITAL_LATERAL}
@@ -834,6 +914,10 @@ function baseQuery(where: Where, f: Filters) {
     ${ANNUAL_LATERAL}
     ${INSIDER_LATERAL}
     ${REVENUE_LATERAL}
+    ${EPS_GROWTH_LATERAL}`;
+
+function baseQuery(where: Where, f: Filters) {
+  return `${FROM_CLAUSE}
    WHERE ${where.sql}
    ORDER BY ${SORT_COLUMNS[f.sort]} ${f.dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, s.stock_id ASC`;
 }
@@ -857,15 +941,9 @@ export async function runScreener(f: Filters, dates: TradeDate[]): Promise<Scree
 
   const where = buildWhere(f, tradeDate);
 
-  const countSql = `SELECT count(*)::int AS n
-    FROM stock_daily d
-    JOIN stock s ON s.stock_id = d.stock_id
-    ${CAPITAL_LATERAL}
-    ${QUARTERLY_LATERAL}
-    ${DIVIDEND_LATERAL}
-    ${ANNUAL_LATERAL}
-    ${INSIDER_LATERAL}
-    ${REVENUE_LATERAL}
+  // 跟清單共用同一份 FROM。各寫一份的話，新增 LATERAL 只改一邊
+  // 會讓筆數與清單對不起來，而條件若引用了新的別名還會直接報錯。
+  const countSql = `SELECT count(*)::int AS n ${FROM_CLAUSE}
    WHERE ${where.sql}`;
   const [{ n: total }] = await prisma.$queryRawUnsafe<{ n: number }[]>(countSql, ...where.values);
 

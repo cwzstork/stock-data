@@ -144,7 +144,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 近四季＝最近四季加總；而單季要從累計相減，缺任何一期就算不出來。</p>
 </div>
 
-<h2>二、欄位總表（51 欄）</h2>
+<h2>二、欄位總表（54 欄）</h2>
 
 <h3>識別（4 欄）</h3>
 <div class="scroll"><table>
@@ -190,10 +190,43 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td>EPS(單季)</td><td><span class="tag q">單季</span></td><td>該季基本每股盈餘</td></tr>
 <tr><td><strong>EPS(近四季)</strong></td><td><span class="tag q">近四季</span></td><td>四季加總。台積電 22.08+19.51+17.44+27.25 = 86.28</td></tr>
 <tr><td>每股淨值(2026-06-30)</td><td><span class="tag now">當期</span></td><td>母公司權益 ÷ 股數。與證交所公告同口徑（實測統一證 29.99、台積電 248.05 完全相同）</td></tr>
+<tr><td><strong>EPS連續成長(年)</strong></td><td><span class="tag y">年</span></td><td>年度 EPS 連續成長幾年，見下方</td></tr>
+<tr><td>EPS(2025年)</td><td><span class="tag y">年</span></td><td>最新一個「四季齊全」年度的 EPS（四季加總）</td></tr>
+<tr><td>EPS(2024年)</td><td><span class="tag y">年</span></td><td>前一個完整年度，用來對照成長幅度</td></tr>
 <tr><td>財報期別</td><td>—</td><td>這一列用的是哪一期。空白代表沒有財報（ETF、興櫃）</td></tr>
 </table></div>
 <p>涵蓋 <strong>2015-03-31 ~ 2026-06-30</strong>（46 期，共 2,246 列），但只有 <strong>6 / 3,081 檔</strong>完成回補，
 其餘仍是舊的單期資料。這個資料集排在年度彙總之後，需要 <strong>約 11 小時</strong>執行時間。</p>
+
+<div class="box ok">
+<p><strong>EPS(年)連續成長年數怎麼算。</strong>篩選區有下拉可選 3 年 / 5 年 / 10 年以上。</p>
+<p>年度 EPS ＝ <strong>該年四季單季 EPS 加總</strong>，只採「四季齊全且四季都有 EPS」的年度——
+少一季會把該年低估，而低估的那年會假裝成衰退，把後面真正的連續紀錄硬生生切斷。
+所以<strong>當年度永遠不列入</strong>（2026 只到 Q2）。</p>
+<p>從最新完整年度往回數，連續成長幾次就是幾年。判定用<strong>嚴格大於，持平不算成長</strong>。</p>
+<div class="scroll"><table>
+<tr><th>股票</th><th>連續成長</th><th>斷在哪一年</th></tr>
+<tr><td>中華電 2412</td><td class="num">6</td><td>2019 的 4.23 低於 2018 的 4.59</td></tr>
+<tr><td>彰銀 2801</td><td class="num">5</td><td>2020 的 0.68 低於 2019 的 1.16</td></tr>
+<tr><td>台產 2832</td><td class="num">4</td><td>2021 的 1.03 低於 2020 的 1.90</td></tr>
+<tr><td>台積電 2330</td><td class="num">2</td><td>2023 的 32.34 低於 2022 的 39.20</td></tr>
+<tr><td>統一證 2855</td><td class="num">0</td><td>2024、2025 都是 3.00，<strong>持平不算成長</strong></td></tr>
+<tr><td>富邦金 2881</td><td class="num">0</td><td>2025 的 8.37 低於 2024 的 10.77</td></tr>
+</table></div>
+<p><strong>兩個要注意的地方：</strong></p>
+<ul>
+<li><strong>這是純數值比較</strong>——EPS 從 −5 到 −3 也算成長一年。要排除虧損公司，
+再加一個「EPS(近四季)」的下限條件。</li>
+<li><strong>10 年剛好在資料邊界上。</strong>季報從 2015Q1 起，完整年度是 2015~2025 共 11 年，
+連續成長 10 年需要這 11 年一年不缺。任何一季漏掉就篩不出來。</li>
+</ul>
+</div>
+
+<div class="box bad">
+<p><strong>回補完成前這個條件幾乎篩不到東西。</strong>
+年度 EPS 來自 <code>stock_quarterly</code>，目前只有 6 / 3,081 檔有資料。
+季報回補排在年度彙總之後，約 11 小時。補完之前這個下拉選了也只會跑出那 6 檔裡的幾檔。</p>
+</div>
 
 <div class="box bad">
 <p><strong>不是每個行業都有這些數字。</strong></p>

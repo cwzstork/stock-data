@@ -132,6 +132,7 @@ function buildColumns(p: {
   capitalDate: string | null;
   insiderDate: string | null;
   revenueMonth: string | null;
+  epsYear: number | null;
 }): {
   key: SortKey | null;
   label: string;
@@ -146,6 +147,9 @@ function buildColumns(p: {
   const rm = p.revenueMonth ?? '最新月';
   // 預估的是「最新已公布月營收所屬年度」的全年 EPS
   const estYear = p.revenueMonth ? `${p.revenueMonth.slice(0, 4)}年` : '年';
+  // 年度 EPS 只採四季齊全的年度，所以最新完整年度通常是去年，不是今年
+  const ey = p.epsYear ? `${p.epsYear}年` : '最新完整年';
+  const eyPrev = p.epsYear ? `${p.epsYear - 1}年` : '前一完整年';
   return [
   { key: 'stock_id', label: '股號' },
   { key: null, label: '股名' },
@@ -180,6 +184,10 @@ function buildColumns(p: {
   { key: 'eps', label: 'EPS(單季3個月)', right: true },
   { key: 'eps_ttm', label: 'EPS(近四季12個月)', right: true },
   { key: 'bvps', label: `每股淨值(${qe})`, right: true },
+
+  { key: 'eps_grow', label: 'EPS連續成長(年)', right: true },
+  { key: 'eps_year', label: `EPS(${ey})`, right: true },
+  { key: null, label: `EPS(${eyPrev})`, right: true },
 
   { key: 'rev_m_yoy', label: `月營收年增(${rm})%`, right: true },
   { key: 'rev_ytd_yoy', label: `營收年增(${estYear}累計)%`, right: true },
@@ -255,6 +263,10 @@ function Row({ r }: { r: ScreenerRow }) {
       {nb(r.eps_ttm)}
       {n(r.bvps)}
 
+      {n(r.eps_grow, 0)}
+      {nb(r.eps_year)}
+      {n(r.eps_year_prev)}
+
       {n(r.rev_m_yoy)}
       {n(r.rev_ytd_yoy)}
       {nb(r.est_eps)}
@@ -328,6 +340,7 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
     capitalDate: period?.capitalDate ?? null,
     insiderDate: period?.insiderDate ?? null,
     revenueMonth: period?.revenueMonth ?? null,
+    epsYear: period?.epsYear ?? null,
   });
 
   // 目前畫面上的條件，原樣拿來存或分享
@@ -473,6 +486,15 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <Field label="10年歷史殖下限 (%)">
             <input type="number" step="any" name="hy10Min" defaultValue={f.hy10Min ?? ''}
               placeholder="例：4" className={inputCls} />
+          </Field>
+
+          <Field label="EPS(年)連續成長年數下限">
+            <select name="epsGrowMin" defaultValue={f.epsGrowMin ?? ''} className={inputCls}>
+              <option value="">不限</option>
+              <option value="3">3 年以上</option>
+              <option value="5">5 年以上</option>
+              <option value="10">10 年以上</option>
+            </select>
           </Field>
 
           <Field label="5年最低PER 上限">
