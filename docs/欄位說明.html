@@ -83,33 +83,38 @@
 
 <h1>台股篩選器 — 欄位說明</h1>
 <p class="lede">
-  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-09-30</strong>。<br>
+  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-10-01</strong>。<br>
   畫面上的欄位名都會標出時間基準——同一個指標在不同基準下差很多，
   台積電 <strong>ROE(近四季) 34.78%</strong> 與 <strong>ROE(累計年化) 39.77%</strong> 是同一天的兩個數字。
 </p>
 
 <div class="grid">
-  <div class="card"><b>77 MB</b><span>資料庫已用 / 512 MB</span>
-    <div class="bar"><i style="width:15%"></i></div></div>
-  <div class="card"><b>3,081 / 3,081</b><span>配息回補　<strong style="color:#15803d">完成</strong></span>
+  <div class="card"><b>97 MB</b><span>資料庫已用 / 512 MB</span>
+    <div class="bar"><i style="width:19%"></i></div></div>
+  <div class="card"><b>3,083 / 3,083</b><span>配息回補　<strong style="color:#15803d">完成</strong></span>
     <div class="bar"><i style="width:100%"></i></div></div>
-  <div class="card"><b>2,180 / 3,081</b><span>年度彙總回補　進行中</span>
-    <div class="bar"><i style="width:71%"></i></div></div>
-  <div class="card"><b>6 / 3,081</b><span>十年季報回補　排隊中</span>
-    <div class="bar"><i style="width:0.2%"></i></div></div>
-  <div class="card"><b>3 / 3,081</b><span>十年月營收回補　排隊中</span>
+  <div class="card"><b>3,081 / 3,083</b><span>年度彙總回補　<strong style="color:#15803d">完成</strong></span>
+    <div class="bar"><i style="width:100%"></i></div></div>
+  <div class="card"><b>120 / 3,083</b><span>十年季報回補　進行中</span>
+    <div class="bar"><i style="width:4%"></i></div></div>
+  <div class="card"><b>3 / 3,083</b><span>十年月營收回補　排隊中</span>
+    <div class="bar"><i style="width:0.1%"></i></div></div>
+  <div class="card"><b>4 / 3,083</b><span>日頻 Parquet 外存　排隊中</span>
     <div class="bar"><i style="width:0.1%"></i></div></div>
 </div>
 
 <div class="box ok">
 <p><strong>回補正在自動執行，不用手動點。</strong>GitHub Actions 每 6 小時觸發一次，
-單輪跑滿 4.7 小時。確認方式是隔一分鐘查兩次進度：
-2026-09-30 15:36 是 2,178 檔、15:37 是 2,180 檔，正在寫入。</p>
-<p>剩餘執行時間：年度彙總 901 檔 × 2 次呼叫 ≈ <strong>3 小時</strong>　→　
-季報 3,075 檔 × 2 ≈ <strong>11 小時</strong>　→　月營收 3,078 檔 × 1 ≈ <strong>5.5 小時</strong>。
-合計約 20 小時執行時間，以每 6 小時跑 4.7 小時計算，<strong>約 1 天半後全部補完</strong>。</p>
-<p><small>Actions 頁面看到 <code>cancelled</code> 的紀錄是正常的——腳本跑滿 4.7 小時後
-job 的 300 分鐘上限會把它收掉，進度已經寫進 <code>backfill_log</code>，下一輪接著跑。</small></p>
+單輪把時間用完才停，一個資料集清空了就接下一個。</p>
+<p>2026-10-01 進度：配息 <strong>3,083 / 3,083 ✅</strong>、年度彙總 <strong>3,081 / 3,083 ✅</strong>、
+季報 <strong>120 / 3,083</strong> 進行中、月營收 3 / 3,083、日頻 Parquet 4 / 3,083。</p>
+<p>剩餘執行時間：季報 ≈ <strong>10.5 小時</strong>　→　月營收 ≈ <strong>5.5 小時</strong>　→　
+日頻 Parquet ≈ <strong>5.5 小時</strong>。合計約 21.5 小時，以每 6 小時跑 4.7 小時計算，
+<strong>約 2 天後全部補完</strong>。</p>
+<p><small>Actions 頁面看到 <code>cancelled</code> 是正常的——腳本跑滿 4.7 小時後
+job 的 300 分鐘上限會把它收掉，進度已經寫進 <code>backfill_log</code>，下一輪接著跑。
+9/30 12:24 那一輪的 <code>failure</code> 則是 Parquet 上傳撞到 Release 的 1,000 個
+asset 上限，回補本身 154.9 分鐘跑完、失敗 0，資料都進資料庫了。</small></p>
 </div>
 
 <h2>一、時間基準：六種</h2>
@@ -365,33 +370,40 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   <small>程式已完成並驗證，排在年度彙總之後執行。</small>
   <p>單季／累計／近四季／年增率的欄位與查詢都已上線，等資料補齊就會有值。</p>
 </div>
-<div>
-  <h4>1. 等年度彙總跑完（2,180 / 3,081，剩約 3 小時）</h4>
-  <small>每檔 2 次 API 呼叫，同時產生 Parquet 與歷史日頻。</small>
-  <p>補齊後：5年／10年歷史殖、5年最低殖、5年最低PER、便宜價三式、
-  以及基準日下拉各日期的涵蓋檔數都會補滿。</p>
+<div class="done">
+  <h4>年度彙總回補（3,081 / 3,083）</h4>
+  <small>2026-09-30 完成，耗時 154.9 分鐘。stock_daily 來到 451,912 列。</small>
+  <p>解掉：5年／10年歷史殖、5年最低殖、5年最低PER、便宜價三式，
+  以及基準日下拉各日期的涵蓋檔數。</p>
 </div>
 <div>
-  <h4>2. 等十年季報跑完（6 / 3,081，約 11 小時）</h4>
+  <h4>1. 等十年季報跑完（120 / 3,083，剩約 10.5 小時）</h4>
   <small>每檔 2 次呼叫，一次拿 46 期（2015Q1~2026Q2）。</small>
   <p>補齊後：單季／累計／近四季所有比率、三個年增率、近四季 EPS 與 ROE、
-  流動比、歷史股本都會有值。</p>
+  流動比、歷史股本，以及<strong>EPS(年)連續成長年數</strong>都會有值。</p>
 </div>
 <div>
-  <h4>3. 股本改接季報的歷史值</h4>
+  <h4>2. 十年月營收回補（3 / 3,083，約 5.5 小時）</h4>
+  <small>FinMind <code>TaiwanStockMonthRevenue</code>，每檔 1 次呼叫，實測 141 個月（2014-12 ~ 2026-08）。約 5.5 小時。</small>
+  <p>補齊後自算預估 EPS 才能回測——用過去某個時點的月營收去推估，
+  再跟後來實際公布的 EPS 對照，就知道這個算式準不準。</p>
+</div>
+<div>
+  <h4>3. 重建年度 Parquet</h4>
+  <small>新的 <code>parquet</code> 資料集，每檔 1 次呼叫，3,081 檔約 5.5 小時，會跨兩輪。</small>
+  <p>排在季報與月營收之後。舊的 <code>daily-parquet</code> release 先留著
+  （那 1,000 檔還查得到），新的寫到 <code>daily-parquet-year</code>，
+  驗證過再手動 <code>gh release delete daily-parquet -y</code>。</p>
+</div>
+<div>
+  <h4>4. 股本改接季報的歷史值</h4>
   <small>資料已經在 <code>stock_quarterly.capital_stock</code>，只差把畫面那一欄改指過去。</small>
   <p>解掉限制 ②（股本的 look-ahead）。等季報有一定覆蓋率再改比較有意義。</p>
 </div>
 <div>
-  <h4>4. 年度財報值與 ROE 多年平均</h4>
+  <h4>5. 年度財報值與 ROE 多年平均</h4>
   <small>季報補完就能算——該年四季加總即可，<strong>不用再抓任何資料</strong>。</small>
   <p>可做：2016 毛利率、2016 ROE 這類年度值，以及 ROE 3 年／5 年／10 年平均。</p>
-</div>
-<div>
-  <h4>5. 十年月營收回補</h4>
-  <small>FinMind <code>TaiwanStockMonthRevenue</code>，每檔 1 次呼叫，實測 141 個月（2014-12 ~ 2026-08）。約 5.5 小時。</small>
-  <p>補齊後自算預估 EPS 才能回測——用過去某個時點的月營收去推估，
-  再跟後來實際公布的 EPS 對照，就知道這個算式準不準。</p>
 </div>
 <div>
   <h4>6. 現金流量回補</h4>
@@ -406,17 +418,21 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   <strong>只影響「最後更新時間」的顯示，不影響任何資料正確性</strong>
   （進度判斷只看有沒有這一列，不看時間）。改成 <code>timestamptz</code> 即可。</p>
 </div>
-<div>
-  <h4>8. Parquet 按年分檔（compaction）</h4>
-  <small>目前按股票分檔，查單檔十年只開 1 個檔，但查「2018-01-24 全市場」要開 3,081 個檔。</small>
-  <p>要支援全市場歷史掃描才需要，優先度低。</p>
+<div class="done">
+  <h4>Parquet 改成一年一個檔</h4>
+  <small>2026-10-01 完成。原因是撞到 GitHub 的硬限制，不是最佳化。</small>
+  <p><strong>每個 Release 最多 1,000 個 asset</strong>——一檔股票一個 Parquet，
+  補到第 1,000 個（<code>3567.parquet</code>）就被擋住，之後每一輪上傳都失敗
+  （回補本身是好的，只有 job 紅燈）。改成一年一檔共 12 個，
+  順便解掉「查某一天的全市場要開 3,081 個檔」。
+  跨輪執行用 <code>stock_id</code> 比對合併，重跑不會產生重複列（實測重複 0 筆）。</p>
 </div>
 <div>
-  <h4>9. 定期修剪 stock_daily</h4>
+  <h4>8. 定期修剪 stock_daily</h4>
   <small>見下一節。依修正後的估算大約 2.6 年後才會需要。</small>
 </div>
 <div>
-  <h4>10. 沒有免費來源，不會做</h4>
+  <h4>9. 沒有免費來源，不會做</h4>
   <ul>
     <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API。
       實測 CMoney、鉅亨、Yahoo、玩股網的公開頁面都沒有這個欄位。
@@ -490,10 +506,11 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 </div>
 
 <div class="box ok">
-<p><strong>Parquet 已經在扛了。</strong>完整十年逐日（每檔約 2,860 列）寫成 Parquet 放 GitHub Release，
-實測壓縮後每檔 39–59 KB、全市場約 150 MB，不計入 repo 大小、單檔上限 2 GB。</p>
+<p><strong>Parquet 已經在扛了。</strong>完整十年逐日寫成 Parquet 放 GitHub Release，
+<strong>一年一個檔</strong>（<code>2015.parquet</code> … <code>2026.parquet</code>），
+全市場約 150 MB，不計入 repo 大小、單檔上限 2 GB。</p>
 <p>所以資料庫只是「熱快取」，<strong>方案 A 刪掉的東西一筆都沒真的消失</strong>。查法不用下載整包：</p>
-<p><code>SELECT date, close FROM 'https://github.com/cwzstork/stock-data/releases/download/daily-parquet/2330.parquet' WHERE date >= '2020-01-01'</code></p>
+<p><code>SELECT stock_id, close FROM 'https://github.com/cwzstork/stock-data/releases/download/daily-parquet-year/2018.parquet' WHERE date = '2018-01-24'</code></p>
 <p>Parquet 每年增加約 15 MB，以 GitHub Release 的額度可以用上百年。</p>
 </div>
 

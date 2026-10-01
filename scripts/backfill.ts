@@ -28,7 +28,7 @@ import {
   type PerRow,
   type PriceRow,
 } from '../src/lib/finmind';
-import { readParquetDir, writeDailyParquet } from '../src/lib/parquet';
+import { appendDaily, finalizeYears, readParquetBaseUrl, readParquetDir } from '../src/lib/parquet';
 
 try {
   process.loadEnvFile('.env');
@@ -247,8 +247,7 @@ function aggregate(stockId: string, prices: PriceRow[], pers: PerRow[]): AnnualR
 
 // 沒設定 PARQUET_DIR 就是 null，整段外存會安靜跳過
 const PARQUET_DIR = readParquetDir();
-let parquetFiles = 0;
-let parquetBytes = 0;
+let parquetRows = 0;
 let dailyRows = 0;
 
 /**
@@ -307,21 +306,9 @@ async function runAnnual(stockId: string) {
   const rows = aggregate(stockId, prices, pers);
   if (!COMMIT || rows.length === 0) return { rows: rows.length, dropped: 0, conflicts: [], note: '' };
 
-  // 日頻明細順手外存。這裡不用多打任何一次 API——prices 本來就抓進來了，
-  // 只是彙總完就丟掉太可惜，而它進資料庫會撞爆免費層容量。
-  let parquetNote = '';
-  if (PARQUET_DIR && prices.length) {
-    try {
-      const w = await writeDailyParquet(PARQUET_DIR, stockId, prices);
-      parquetFiles += 1;
-      parquetBytes += w.bytes;
-      parquetNote = `  parquet ${w.rows} 列 / ${(w.bytes / 1024).toFixed(0)}KB`;
-    } catch (e) {
-      // 外存失敗不該讓年度彙總跟著失敗，那才是主要產出
-      console.warn(`      ! ${stockId} Parquet 產生失敗: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-
+  // Parquet 外存已經搬去獨立的「日頻 Parquet」資料集。
+  // 原本是在這裡順手寫的（prices 本來就抓進來了，不用多打 API），
+  // 但年度檔必須等整輪抓完才寫得出來，混在這裡會讓兩件事的生命週期糾纏。
   const daily = await writeDailyRows(stockId, prices, pers);
   dailyRows += daily;
 
@@ -361,7 +348,7 @@ async function runAnnual(stockId: string) {
     rows: rows.length,
     dropped: 0,
     conflicts: [],
-    note: `${rows[0].year}~${last.year} 均價 ${Number(last.avgClose).toFixed(2)}  日頻 ${daily} 列${parquetNote}`,
+    note: `${rows[0].year}~${last.year} 均價 ${Number(last.avgClose).toFixed(2)}  日頻 ${daily} 列`,
   };
 }
 
@@ -615,6 +602,34 @@ async function runRevenue(stockId: string) {
   };
 }
 
+/**
+ * 日頻 Parquet 外存。
+ *
+ * 只打一次 API（價格），把整段十年日頻累積到每年一個 NDJSON，
+ * 整輪結束時由 finalizeYears 合併成年度 Parquet。
+ *
+ * 排在最後：它是冷資料，而篩選器要的欄位都來自前面幾個資料集。
+ * 3,081 檔 × 6.4s ≈ 5.5 小時，會跨兩輪跑完——第二輪靠 stock_id 比對
+ * 把第一輪的結果合併進來，不會重複也不會覆蓋掉。
+ */
+async function runParquet(stockId: string) {
+  const prices = await fetchPriceHistory(stockId, START_DATE);
+  if (!PARQUET_DIR) {
+    return { rows: 0, dropped: 0, conflicts: [], note: '未設定 PARQUET_DIR，略過' };
+  }
+  if (!COMMIT || prices.length === 0) {
+    return { rows: prices.length, dropped: 0, conflicts: [], note: '' };
+  }
+  const w = await appendDaily(PARQUET_DIR, prices);
+  parquetRows += w.rows;
+  return {
+    rows: w.rows,
+    dropped: 0,
+    conflicts: [],
+    note: `${prices[0].date} ~ ${prices[prices.length - 1].date}　${w.years} 個年度`,
+  };
+}
+
 // ── 資料集登記 ────────────────────────────────────────────────────
 
 interface Dataset {
@@ -630,6 +645,7 @@ const DATASETS: Dataset[] = [
   { key: 'annual', label: '年度彙總', calls: 2, run: runAnnual },
   { key: 'quarterly', label: '十年季報', calls: 2, run: runQuarterly },
   { key: 'revenue', label: '十年月營收', calls: 1, run: runRevenue },
+  { key: 'parquet', label: '日頻 Parquet 外存', calls: 1, run: runParquet },
 ];
 
 /** FinMind register 層的文件額度是 600 次/小時，留一點餘裕給每日同步 */
@@ -713,10 +729,12 @@ async function runDataset(ds: Dataset, deadline: number, t0: number): Promise<vo
   const p0 = await progress(ds.key);
   console.log(`整體進度 ${p0.done} / ${p0.total}`);
   if (ds.key === 'annual') {
-    console.log(
-      PARQUET_DIR ? `日頻明細外存：${PARQUET_DIR}` : '日頻明細外存：未設定 PARQUET_DIR，略過',
-    );
     console.log(`寫入資料庫的日期：每月最後交易日 ${DAILY_MONTH_ENDS} 期 ＋ 最近 ${DAILY_RECENT_DAYS} 個交易日`);
+  }
+  if (ds.key === 'parquet') {
+    console.log(PARQUET_DIR ? `輸出到：${PARQUET_DIR}` : '未設定 PARQUET_DIR，這個資料集會空轉');
+    const base = readParquetBaseUrl();
+    console.log(base ? `與既有年度檔合併：${base}` : '沒設 PARQUET_BASE_URL，整包重建不合併');
   }
   console.log('');
 
@@ -730,10 +748,9 @@ async function runDataset(ds: Dataset, deadline: number, t0: number): Promise<vo
   let empty = 0;
   let failed = 0;
   let dropped = 0;
-  // 這三個是跨資料集累計的，先記下起點，收尾時報差額
+  // 這兩個是跨資料集累計的，先記下起點，收尾時報差額
   const daily0 = dailyRows;
-  const files0 = parquetFiles;
-  const bytes0 = parquetBytes;
+  const rows0 = parquetRows;
 
   for (const [i, t] of targets.entries()) {
     // 時間到就停。剩下的留給下一輪——進度記在 backfill_log，不會重做。
@@ -778,10 +795,20 @@ async function runDataset(ds: Dataset, deadline: number, t0: number): Promise<vo
   if (dailyRows > daily0) {
     console.log(`寫入 stock_daily：${(dailyRows - daily0).toLocaleString()} 列`);
   }
-  if (parquetFiles > files0) {
-    console.log(
-      `Parquet：${parquetFiles - files0} 檔 / ${((parquetBytes - bytes0) / 1024 / 1024).toFixed(1)} MB`,
-    );
+  if (ds.key === 'parquet' && COMMIT && PARQUET_DIR && parquetRows > rows0) {
+    console.log(`
+收斂成年度 Parquet（本輪累積 ${(parquetRows - rows0).toLocaleString()} 列）…`);
+    const files = await finalizeYears(PARQUET_DIR, readParquetBaseUrl());
+    let bytes = 0;
+    for (const y of files) {
+      bytes += y.bytes;
+      console.log(
+        `  ${y.year}  ${y.rows.toLocaleString().padStart(9)} 列  ` +
+          `${(y.bytes / 1024 / 1024).toFixed(1).padStart(6)} MB  ` +
+          `${y.merged ? '已與既有檔合併' : '只有本輪資料'}`,
+      );
+    }
+    console.log(`合計 ${files.length} 個年度檔 / ${(bytes / 1024 / 1024).toFixed(1)} MB`);
   }
   if (!COMMIT) console.log('（乾跑，沒有寫入也沒有記錄進度）');
 

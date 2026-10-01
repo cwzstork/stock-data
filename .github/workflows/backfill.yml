@@ -51,8 +51,11 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-          # 年度彙總順便把日頻明細寫成 Parquet 到這個資料夾，下一步再上傳
+          # 「日頻 Parquet 外存」資料集把年度檔寫到這裡，下一步再上傳
           PARQUET_DIR: ${{ github.workspace }}/parquet
+          # 既有年度檔的網址。跨輪執行時用它把上一輪的結果合併進來，
+          # 沒設的話每輪都只會輸出該輪抓到的股票，等於把前一輪蓋掉。
+          PARQUET_BASE_URL: https://github.com/${{ github.repository }}/releases/download/daily-parquet-year
         shell: bash
         run: |
           set -o pipefail
@@ -60,9 +63,13 @@ jobs:
           # 不帶 --limit 時腳本會依 5.5 小時的額度自己算要處理幾檔
           npm run backfill -- --commit ${{ inputs.limit && format('--limit={0}', inputs.limit) || '' }} 2>&1 | tee backfill.log
 
-      # 檔名就是股號，--clobber 會覆蓋同名 asset，
-      # 所以之後重跑不會累積重複資料，也不用先清掉舊檔。
-      - name: 上傳日頻 Parquet 到 Release
+      # 一年一個檔（2015.parquet …），12 個檔遠低於 Release 的 1,000 個 asset 上限。
+      #
+      # 舊的 daily-parquet 是「一檔股票一個檔」，補到第 1,000 個就撞上限、
+      # 之後每輪上傳都失敗。那個 release 保留不動（還查得到那 1,000 檔），
+      # 等這邊重建完驗證過再手動刪掉：
+      #   gh release delete daily-parquet -y
+      - name: 上傳年度 Parquet 到 Release
         if: always()
         shell: bash
         env:
@@ -71,13 +78,13 @@ jobs:
           shopt -s nullglob
           files=(parquet/*.parquet)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "這一輪沒有產生 Parquet（可能還在補配息）"
+            echo "這一輪沒有產生 Parquet（還輪不到那個資料集）"
             exit 0
           fi
-          echo "準備上傳 ${#files[@]} 個檔案"
-          # 第一次要先把 release 建起來；已存在就忽略錯誤
-          gh release view daily-parquet >/dev/null 2>&1 ||             gh release create daily-parquet               --title '台股日頻明細（Parquet）'               --notes '每檔一個 Parquet，檔名是股號。DuckDB 可直接以網址查詢，不必下載整包。'
-          gh release upload daily-parquet "${files[@]}" --clobber
+          echo "準備上傳 ${#files[@]} 個年度檔"
+          ls -lh parquet/*.parquet
+          gh release view daily-parquet-year >/dev/null 2>&1 ||             gh release create daily-parquet-year               --title '台股日頻明細（Parquet，一年一檔）'               --notes 'DuckDB 可直接以網址查詢，不必下載整包。欄位：date, stock_id, open, high, low, close, volume, turnover'
+          gh release upload daily-parquet-year "${files[@]}" --clobber
           du -sh parquet
 
       - name: 把結果貼到執行摘要

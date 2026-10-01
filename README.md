@@ -29,7 +29,7 @@
 |---|---|---|
 | 前端 / 後端 | Next.js 16（App Router，幾乎全 server component） | — |
 | 資料庫 | Neon PostgreSQL 18 | 0.5 GB |
-| 日頻明細 | Parquet on GitHub Release | 單檔 2 GB，不計入 repo |
+| 日頻明細 | Parquet on GitHub Release | 單檔 2 GB、每個 release 1,000 個檔，不計入 repo |
 | 每日同步 / 歷史回補 | GitHub Actions | 公開 repo 免費 |
 | 部署 | Vercel（函式區域 `sin1`） | Hobby（個人非商業用途） |
 
@@ -129,8 +129,12 @@ npm run backfill -- --commit '--stocks=2330,0056' 指定股票
 | `sync.yml` | 每個交易日 18:00（台北） | 主檔、當日行情、股本、內部人持股、月營收 |
 | `backfill.yml` | 每 6 小時（`7 */6 * * *`） | 逐檔回補，單輪跑滿 4.7 小時 |
 
-回補依序處理四個資料集：**配息 → 年度彙總 → 十年季報 → 十年月營收**，
+回補依序處理五個資料集：**配息 → 年度彙總 → 十年季報 → 十年月營收 → 日頻 Parquet**，
 進度記在 `backfill_log`，中斷可續跑。
+
+一輪之內會把時間用完才停：目前這個資料集清空了就接下一個。
+原本是「挑第一個沒補完的跑完就結束」，結果主檔多兩檔新股票就會讓配息
+變回「沒補完」，整輪花十幾秒補那兩檔就收工，後面的季報永遠輪不到。
 
 > GitHub 的排程是盡力而為，整點與半點最壅塞，高負載時會延遲甚至整個丟棄。
 > 實測原本設每小時 `:30` 連續三小時一次都沒觸發。改成每 6 小時、分鐘選 `:07`，
@@ -161,6 +165,7 @@ build 失敗，只會在開頁面時才報 `DATABASE_URL 未設定`。
 | `DIRECT_URL` | `prisma migrate` 專用，**direct**。走 pooler 會因為拿不到 advisory lock 而失敗 |
 | `FINMIND_TOKEN` | FinMind API token |
 | `PARQUET_DIR` | 回補時把日頻明細寫成 Parquet 的資料夾。沒設就跳過 |
+| `PARQUET_BASE_URL` | 既有年度 Parquet 的網址前綴，跨輪執行時用來合併。沒設就整包重建 |
 
 `.env` 已被 `.gitignore` 排除。這個 repo 是公開的，任何金鑰都不要進版控。
 
@@ -199,40 +204,46 @@ build 失敗，只會在開頁面時才報 `DATABASE_URL 未設定`。
 十年逐日全放進資料庫要 690 萬列、超過 1 GB，撞爆免費層 0.5 GB。
 資料庫只留**每月最後交易日 120 期 ＋ 最近 61 個交易日**，完整逐日外存 Parquet。
 
-實測一檔十二年（2,860 列）：JSON 364 KB → Parquet(ZSTD) 39–59 KB，
-全市場約 150 MB。檔案由 `annual` 回補順手產生——**不額外打任何一次 API**，
-日頻資料本來就為了算年度彙總抓進來了。
+**一年一個檔**（`2015.parquet` … `2026.parquet`），release tag 是 `daily-parquet-year`。
 
-檔名就是股號，上傳用 `--clobber`，重跑會覆蓋同名 asset，不會累積重複。
+> 原本是「一檔股票一個檔」，檔名就是股號，重跑靠 `--clobber` 覆蓋天然去重。
+> 但 **GitHub 每個 release 最多 1,000 個 asset**，3,081 檔放不下——實測補到
+> 第 1,000 個（`3567.parquet`）就被擋住，之後每一輪上傳都失敗。
+> 舊的 `daily-parquet` release 保留著（還查得到那 1,000 檔），
+> 重建完驗證過再用 `gh release delete daily-parquet -y` 刪掉。
+
+改成一年一檔之後 12 個檔，離 1,000 很遠；每檔約 12 MB，離單檔 2 GB 也很遠。
+順便解掉「查某一天的全市場要開 3,081 個檔」——現在只要開 1 個。
+
+跨輪執行時用 `PARQUET_BASE_URL` 把上一輪的結果合併回來：
+這一輪重抓過的股票，舊檔裡屬於它們的列**整批換掉**而不是疊加，
+所以同一檔重跑幾次都不會產生重複列（實測 4 檔重跑一檔，重複 0 筆）。
 
 ### 怎麼查
 
-不用下載整包，DuckDB 可以直接查單一網址：
+不用下載整包，DuckDB 可以直接查單一網址。查某一天的全市場只要開一個檔：
 
 ```sql
 INSTALL httpfs; LOAD httpfs;
 
-SELECT date, close, volume
-  FROM 'https://github.com/cwzstork/stock-data/releases/download/daily-parquet/2330.parquet'
- WHERE date >= '2020-01-01'
- ORDER BY date;
+SELECT stock_id, close, volume
+  FROM 'https://github.com/cwzstork/stock-data/releases/download/daily-parquet-year/2018.parquet'
+ WHERE date = '2018-01-24';
 ```
 
-掃多檔就先拉下來：
+查單一檔的十年走勢要開 12 個檔，但 Parquet 有 row group 統計，
+加上 `stock_id` 的條件就會跳過絕大多數 row group，不會真的掃完：
 
 ```bash
-gh release download daily-parquet -D parquet -p '*.parquet'
+gh release download daily-parquet-year -D parquet -p '*.parquet'
 ```
 
 ```sql
-SELECT stock_id, count(*), round(avg(close), 2) FROM 'parquet/*.parquet' GROUP BY 1;
+SELECT date, close, volume FROM 'parquet/*.parquet'
+ WHERE stock_id = '2330' AND date >= '2020-01-01' ORDER BY date;
 ```
 
 欄位：`date DATE, stock_id VARCHAR, open/high/low/close DOUBLE, volume/turnover BIGINT`。
-
-> 目前是「按股票」分檔，查單檔十年只要開 1 個檔，
-> 但查「2018-01-24 全市場」要開 3,081 個檔。
-> 全市場歷史掃描需要另做一套按年分檔的佈局。
 
 ## 狀態
 
