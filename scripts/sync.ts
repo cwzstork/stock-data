@@ -229,6 +229,33 @@ async function main() {
   console.log(`  內部人持股                     ${insiders.length} 筆`);
   console.log(`  月營收                         ${revenues.length} 筆`);
 
+  // 某個市場回空就直接失敗，不要安靜地少寫一整個市場。
+  //
+  // 2026-09-30 的同步就踩到這個：上櫃 1,013 筆、興櫃 362 筆都正常寫進去，
+  // 只有上市那一支回了空陣列。整個 job 還是綠燈，但資料庫裡那天的上市
+  // 只有 329 檔（而且是歷史回補順手寫的，不是當天同步寫的），
+  // 低於基準日的覆蓋度門檻，於是 2026-09-30 整天從下拉選單消失。
+  //
+  // 回空跟「今天沒開市」長得一樣，所以只有在「其他市場有資料」時才算異常——
+  // 真正的休市日是三個市場同時回空。
+  const feeds: [string, number][] = [
+    ['上市行情', twseQ.length],
+    ['上櫃行情', tpexQ.length],
+    ['興櫃行情', esbQ.length],
+  ];
+  const empty = feeds.filter(([, c]) => c === 0);
+  if (empty.length > 0 && empty.length < feeds.length) {
+    throw new Error(
+      `${empty.map(([name]) => name).join('、')}回傳空陣列，但其他市場有資料——` +
+        `上游暫時出問題，這次不寫入，等下一輪重跑。` +
+        `（${feeds.map(([name, c]) => `${name} ${c}`).join('　')}）`,
+    );
+  }
+  if (empty.length === feeds.length) {
+    console.log('  三個市場都沒有行情，今天應該沒有開市。不寫入。');
+    return;
+  }
+
   // ── 2. 合併行情與評價 ────────────────────────────────────────
   console.log('\n[2/5] 合併行情與評價…');
   const quotes = [...twseQ, ...tpexQ, ...esbQ];
