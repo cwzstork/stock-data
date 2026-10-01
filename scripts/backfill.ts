@@ -694,29 +694,15 @@ async function progress(key: string) {
   return r;
 }
 
-async function main() {
-  const t0 = Date.now();
-
-  // 沒指定就挑第一個還沒補完的資料集：配息優先，再來年度彙總
-  let ds = DATASETS.find((d) => d.key === flag('dataset'));
-  if (!ds) {
-    for (const cand of DATASETS) {
-      const p = await progress(cand.key);
-      if (p.done < p.total) {
-        ds = cand;
-        break;
-      }
-    }
-  }
-  if (!ds) {
-    console.log('所有資料集都補完了。');
-    return;
-  }
-
-  const limit = Number(
-    flag('limit') ?? (COMMIT ? Math.floor((CALLS_PER_HOUR * RUN_HOURS) / ds.calls) : 3),
-  );
+/**
+ * 跑一個資料集，直到它的待辦清空或時間用完。
+ */
+async function runDataset(ds: Dataset, deadline: number, t0: number): Promise<void> {
+  const budgetMs = Math.max(0, deadline - Date.now());
   const itemGap = CALL_GAP_MS * ds.calls;
+  const limit = Number(
+    flag('limit') ?? (COMMIT ? Math.max(1, Math.floor(budgetMs / itemGap)) : 3),
+  );
 
   console.log(`\n=== 回補「${ds.label}」 ${COMMIT ? '【實際寫入】' : '【乾跑 DRY RUN】'} ===`);
   const estHours = (limit * itemGap) / 3_600_000;
@@ -744,8 +730,17 @@ async function main() {
   let empty = 0;
   let failed = 0;
   let dropped = 0;
+  // 這三個是跨資料集累計的，先記下起點，收尾時報差額
+  const daily0 = dailyRows;
+  const files0 = parquetFiles;
+  const bytes0 = parquetBytes;
 
   for (const [i, t] of targets.entries()) {
+    // 時間到就停。剩下的留給下一輪——進度記在 backfill_log，不會重做。
+    if (Date.now() >= deadline) {
+      console.log(`  … 時間用完，這個資料集本輪處理到第 ${i} 檔`);
+      break;
+    }
     if (i > 0) await sleep(itemGap);
     try {
       const r = await ds.run(t.stock_id);
@@ -780,9 +775,13 @@ async function main() {
   console.log(
     `\n本次：有資料 ${ok}　無資料 ${empty}　失敗 ${failed}` + (dropped ? `　去除重複列 ${dropped}` : ''),
   );
-  if (dailyRows) console.log(`寫入 stock_daily：${dailyRows.toLocaleString()} 列`);
-  if (parquetFiles) {
-    console.log(`Parquet：${parquetFiles} 檔 / ${(parquetBytes / 1024 / 1024).toFixed(1)} MB`);
+  if (dailyRows > daily0) {
+    console.log(`寫入 stock_daily：${(dailyRows - daily0).toLocaleString()} 列`);
+  }
+  if (parquetFiles > files0) {
+    console.log(
+      `Parquet：${parquetFiles - files0} 檔 / ${((parquetBytes - bytes0) / 1024 / 1024).toFixed(1)} MB`,
+    );
   }
   if (!COMMIT) console.log('（乾跑，沒有寫入也沒有記錄進度）');
 
@@ -791,6 +790,36 @@ async function main() {
     `整體進度 ${p1.done} / ${p1.total}${p1.done < p1.total ? `　還差 ${p1.total - p1.done} 檔` : '　已完成'}`,
   );
   console.log(`耗時 ${((Date.now() - t0) / 1000 / 60).toFixed(1)} 分鐘`);
+}
+
+/**
+ * 一輪之內把時間用完。
+ *
+ * 原本是「挑第一個沒補完的資料集，跑完就結束」，於是只要主檔多了幾檔新股票，
+ * 配息就會從 3,081/3,083 變成「沒補完」，整輪就花十幾秒補那兩檔然後收工——
+ * 一個六小時的排程窗只做了十幾秒的事，排在後面的季報永遠輪不到。
+ *
+ * 改成依序走完 DATASETS：目前這個清空了就接下一個，直到時間用完。
+ */
+async function main() {
+  const t0 = Date.now();
+  const deadline = t0 + RUN_HOURS * 3_600_000;
+
+  const only = DATASETS.find((d) => d.key === flag('dataset'));
+  const queue = only ? [only] : DATASETS;
+
+  let didSomething = false;
+  for (const ds of queue) {
+    if (Date.now() >= deadline) {
+      console.log("\n時間用完，其餘資料集留到下一輪。");
+      break;
+    }
+    const p = await progress(ds.key);
+    if (!only && p.done >= p.total) continue;
+    didSomething = true;
+    await runDataset(ds, deadline, t0);
+  }
+  if (!didSomething) console.log('所有資料集都補完了。');
 }
 
 main()
