@@ -45,14 +45,17 @@ export default async function StockPage({
   if (!stock) notFound();
 
   // 三者互不相干，一起等就好。任何一個掛掉都不該讓整頁空白
-  const [bars, inst, quotes] = await Promise.all([
-    fetchBars(id, START_DATE).catch(() => []),
+  const [barsResult, inst, quotes] = await Promise.all([
+    fetchBars(id, START_DATE),
     fetchInstMap(id, START_DATE).catch(() => new Map()),
     fetchLiveQuotes([{ stockId: id, market: stock.market }]).catch(() => []),
   ]);
   const live = quotes[0];
+  const bars = barsResult.ok ? barsResult.bars : [];
   const points = sliceRange(withIndicators(bars, inst), range);
   const last = points[points.length - 1];
+  // 法人資料抓不到不影響 K 線，但要讓使用者知道那幾欄為什麼是空的
+  const instMissing = barsResult.ok && bars.length > 0 && inst.size === 0;
 
   const keep = (r: RangeKey) => `/stock/${id}?range=${r}`;
 
@@ -105,9 +108,37 @@ export default async function StockPage({
         ))}
       </div>
 
-      <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-        <StockChart points={points} />
-      </div>
+      {!barsResult.ok && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
+          {barsResult.reason === 'quota' ? (
+            <>
+              <p className="font-semibold">FinMind 的每小時額度暫時用完了，不是資料有問題。</p>
+              <p className="mt-1 text-zinc-600 dark:text-zinc-400">
+                免費層是 600 次/小時，歷史回補跑的時候會用掉一部分。
+                等幾分鐘重新整理就會回來。
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-semibold">線圖資料暫時拿不到。</p>
+              <p className="mt-1 text-zinc-600 dark:text-zinc-400">
+                上游回應：{barsResult.message}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      {barsResult.ok && (
+        <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+          <StockChart points={points} />
+          {instMissing && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-500">
+              法人買賣超這次沒拿到，所以法人成本與買賣超那幾欄是空的。K 線本身不受影響。
+            </p>
+          )}
+        </div>
+      )}
 
       {last && (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

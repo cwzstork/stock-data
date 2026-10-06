@@ -18,7 +18,7 @@
  * 有一層行程內快取，因為同一檔在不同期間之間切換時不該重打 API。
  */
 
-import { fetchPriceHistory, fetchInstitutional, type PriceRow } from './finmind';
+import { FinMindError, fetchPriceHistory, fetchInstitutional, type PriceRow } from './finmind';
 
 export interface Bar {
   /** YYYY-MM-DD */
@@ -81,11 +81,32 @@ const cache = new Map<string, { at: number; bars: Bar[] }>();
 const BB_PERIOD = 20;
 const BB_SIGMA = 2;
 
-export async function fetchBars(stockId: string, startDate: string): Promise<Bar[]> {
-  const hit = cache.get(stockId);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.bars;
+/**
+ * 為什麼要分三種結果而不是一律回空陣列：
+ *   「這檔沒有交易資料」與「額度用完了拿不到」在畫面上長得一樣，
+ *   但使用者該做的事完全不同——前者沒救，後者等一下重整就好。
+ *   把錯誤吞掉會讓人以為是資料有問題，其實只是暫時拿不到。
+ */
+export type BarsResult =
+  | { ok: true; bars: Bar[] }
+  | { ok: false; reason: 'quota' | 'upstream'; message: string };
 
-  const raw: PriceRow[] = await fetchPriceHistory(stockId, startDate);
+export async function fetchBars(stockId: string, startDate: string): Promise<BarsResult> {
+  const hit = cache.get(stockId);
+  if (hit && Date.now() - hit.at < TTL_MS) return { ok: true, bars: hit.bars };
+
+  let raw: PriceRow[];
+  try {
+    raw = await fetchPriceHistory(stockId, startDate);
+  } catch (e) {
+    // 402 / 429 是 FinMind 的額度用盡，跟「查不到這檔」是兩回事
+    const quota = e instanceof FinMindError && (e.status === 402 || e.status === 429);
+    return {
+      ok: false,
+      reason: quota ? 'quota' : 'upstream',
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
   const bars: Bar[] = [];
   for (const r of raw) {
     const open = Number(r.open);
@@ -106,7 +127,7 @@ export async function fetchBars(stockId: string, startDate: string): Promise<Bar
   }
   bars.sort((a, b) => a.date.localeCompare(b.date));
   cache.set(stockId, { at: Date.now(), bars });
-  return bars;
+  return { ok: true, bars };
 }
 
 const instCache = new Map<string, { at: number; byDate: Map<string, InstDay> }>();
