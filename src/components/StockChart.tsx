@@ -26,8 +26,9 @@ import type { ChartPoint } from '@/lib/history';
 
 const LINES = {
   ma5: { color: '#f59e0b', label: 'MA5' },
+  ma10: { color: '#8b5cf6', label: 'MA10' },
   ma20: { color: '#3b82f6', label: 'MA20（布林中軌）' },
-  ma60: { color: '#8b5cf6', label: 'MA60' },
+  ma60: { color: '#64748b', label: 'MA60' },
   bbUpper: { color: '#94a3b8', label: '布林上軌' },
   bbLower: { color: '#94a3b8', label: '布林下軌' },
   cost20: { color: '#ec4899', label: '市場成本20日' },
@@ -39,7 +40,7 @@ const LINES = {
 type LineKey = keyof typeof LINES;
 
 /** 預設開啟的線。全開會糊成一團，所以只先開最常看的 */
-const DEFAULT_ON: LineKey[] = ['ma20', 'bbUpper', 'bbLower', 'foreignCost20'];
+const DEFAULT_ON: LineKey[] = ['ma5', 'ma10', 'ma20', 'bbUpper', 'bbLower', 'foreignCost20'];
 
 /** 下方副圖可以選哪一個。放在獨立窗格，因為刻度跟股價完全不同 */
 const PANES = {
@@ -59,6 +60,21 @@ type PaneKey = keyof typeof PANES;
  */
 const SERVER_PANE: PaneKey = 'chips';
 
+/**
+ * 圖例文字帶上週期單位。
+ *
+ * 切到週線時「MA20」指的是 20 <strong>週</strong>均線，不是 20 日——
+ * 指標是在聚合後的 K 棒上重算的。不標出來的話看週線會以為還是日均線。
+ */
+function labelOf(k: LineKey, unit: string): string {
+  const base = LINES[k].label;
+  if (unit === "日") return base;
+  // MA20 → MA20(週)　市場成本20日 → 市場成本20週
+  return base
+    .replace(/^MA([0-9]+)/, (_m, d) => `MA${d}(${unit})`)
+    .replaceAll("日", unit);
+}
+
 const ts = (d: string) => (Date.parse(d + 'T00:00:00Z') / 1000) as UTCTimestamp;
 const fmt = (v: number | null | undefined, d = 2) =>
   v === null || v === undefined || !Number.isFinite(v) ? '—' : v.toFixed(d);
@@ -68,11 +84,14 @@ export default function StockChart({
   points,
   initialPane = 'kd',
   chipsHref,
+  unit = '日',
 }: {
   points: ChartPoint[];
   initialPane?: PaneKey;
   /** 切到籌碼副圖要導去的網址 */
   chipsHref: string;
+  /** 週期單位：日／週／月。用來把「MA20」標成「MA20(週)」之類 */
+  unit?: string;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -334,7 +353,7 @@ export default function StockChart({
             title={on.has(k) ? '點一下隱藏' : '點一下顯示'}
           >
             <span className="inline-block h-0.5 w-3" style={{ background: LINES[k].color }} />
-            {LINES[k].label}
+            {labelOf(k, unit)}
             <b>{fmt(shown[k])}</b>
           </button>
         ))}

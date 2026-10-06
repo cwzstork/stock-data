@@ -44,7 +44,9 @@ export interface ChartPoint extends Bar {
   /** 當日成交均價＝成交金額 ÷ 成交股數。比收盤價更能代表當天的實際成交水準 */
   vwap: number | null;
   ma5: number | null;
+  ma10: number | null;
   ma20: number | null;
+  /** 季線。不在預設顯示，但留著給想看長期趨勢的人 */
   ma60: number | null;
   /** 布林通道：中軌（＝ma20）、上軌、下軌 */
   bbUpper: number | null;
@@ -428,6 +430,7 @@ export function withIndicators(
       ...b,
       vwap: b.volume > 0 ? b.turnover / b.volume : null,
       ma5: sma(closes, i, 5),
+      ma10: sma(closes, i, 10),
       ma20,
       ma60: sma(closes, i, 60),
       bbUpper,
@@ -455,6 +458,123 @@ export function withIndicators(
       shortBalance: chips?.get(b.date)?.short ?? null,
     };
   });
+}
+
+export const TIMEFRAMES = {
+  day: { label: '日線', unit: '日', defaultRange: '1y' },
+  week: { label: '週線', unit: '週', defaultRange: '3y' },
+  month: { label: '月線', unit: '月', defaultRange: 'all' },
+} as const;
+
+export type Timeframe = keyof typeof TIMEFRAMES;
+
+export function isTimeframe(v: string | null): v is Timeframe {
+  return v !== null && v in TIMEFRAMES;
+}
+
+/**
+ * 分組鍵：同一週（或同一月）的交易日會得到同一個鍵。
+ *
+ * 週用 ISO 週（週一起算），這是台股週線的慣例。
+ * 跨年那一週不能直接用「年份 + 週數」硬拼——12/31 可能屬於隔年的第 1 週，
+ * 所以先把日期移到該週的週四再取年份，這是 ISO 8601 的標準作法。
+ */
+function periodKey(date: string, tf: Timeframe): string {
+  if (tf === 'month') return date.slice(0, 7);
+  const d = new Date(date + 'T00:00:00Z');
+  const dow = d.getUTCDay() || 7; // 週日當 7
+  d.setUTCDate(d.getUTCDate() + 4 - dow); // 移到該週的週四
+  const yearStart = Date.UTC(d.getUTCFullYear(), 0, 1);
+  const week = Math.ceil((d.getTime() - yearStart) / 86_400_000 / 7 + 0.5);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/**
+ * 把日 K 聚合成週 K 或月 K。
+ *
+ * 開盤取該期第一天、收盤取最後一天、最高最低取區間極值、量與金額加總——
+ * 這是 K 線聚合的標準定義。代表日期用<strong>該期最後一個交易日</strong>，
+ * 不是週一或月初：這樣最後一根（還沒走完的那週／那月）的日期
+ * 就是「資料到哪一天」，跟畫面上的即時報價對得起來。
+ */
+export function aggregateBars(bars: Bar[], tf: Timeframe): Bar[] {
+  if (tf === 'day') return bars;
+  const out: Bar[] = [];
+  let key = '';
+  for (const b of bars) {
+    const k = periodKey(b.date, tf);
+    if (k !== key) {
+      key = k;
+      out.push({ ...b });
+      continue;
+    }
+    const cur = out[out.length - 1];
+    cur.high = Math.max(cur.high, b.high);
+    cur.low = Math.min(cur.low, b.low);
+    cur.close = b.close;
+    cur.date = b.date;
+    cur.volume += b.volume;
+    cur.turnover += b.turnover;
+  }
+  return out;
+}
+
+/** 每一期的最後一個交易日，當作這一期的代表日期 */
+function lastDates(bars: Bar[], tf: Timeframe): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const b of bars) m.set(periodKey(b.date, tf), b.date);
+  return m;
+}
+
+/** 法人買賣超是<strong>流量</strong>，聚合時要加總 */
+export function aggregateInst(
+  bars: Bar[],
+  tf: Timeframe,
+  inst: Map<string, InstDay>,
+): Map<string, InstDay> {
+  if (tf === 'day') return inst;
+  const last = lastDates(bars, tf);
+  const byKey = new Map<string, InstDay>();
+  for (const b of bars) {
+    const d = inst.get(b.date);
+    if (!d) continue;
+    const k = periodKey(b.date, tf);
+    let acc = byKey.get(k);
+    if (!acc) byKey.set(k, (acc = { foreign: 0, trust: 0, dealer: 0 }));
+    acc.foreign += d.foreign;
+    acc.trust += d.trust;
+    acc.dealer += d.dealer;
+  }
+  const out = new Map<string, InstDay>();
+  for (const [k, acc] of byKey) out.set(last.get(k)!, acc);
+  return out;
+}
+
+/**
+ * 持股比率與融資餘額是<strong>時點</strong>不是流量，所以取該期最後一個有值的，
+ * 不能加總——加總會得到一個沒有意義的數字（例如持股比率變成 300%）。
+ */
+export function aggregateChips(
+  bars: Bar[],
+  tf: Timeframe,
+  chips?: Map<string, ChipDay>,
+): Map<string, ChipDay> | undefined {
+  if (tf === 'day' || !chips) return chips;
+  const last = lastDates(bars, tf);
+  const byKey = new Map<string, ChipDay>();
+  for (const b of bars) {
+    const c = chips.get(b.date);
+    if (!c) continue;
+    const k = periodKey(b.date, tf);
+    const acc = byKey.get(k) ?? { foreignRatio: null, margin: null, short: null };
+    if (c.foreignRatio !== null) acc.foreignRatio = c.foreignRatio;
+    if (c.margin !== null) acc.margin = c.margin;
+    if (c.short !== null) acc.short = c.short;
+    byKey.set(k, acc);
+  }
+  const out = new Map<string, ChipDay>();
+  for (const [k, acc] of byKey) out.set(last.get(k)!, acc);
+  return out;
 }
 
 export const RANGES = {

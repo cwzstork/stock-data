@@ -8,9 +8,15 @@ import {
   fetchChips,
   withIndicators,
   sliceRange,
+  aggregateBars,
+  aggregateInst,
+  aggregateChips,
   RANGES,
+  TIMEFRAMES,
   isRangeKey,
+  isTimeframe,
   type RangeKey,
+  type Timeframe,
 } from '@/lib/history';
 import { MARKET_LABEL } from '@/lib/screener';
 import StockChart from '@/components/StockChart';
@@ -36,8 +42,11 @@ export default async function StockPage({
 }: PageProps<'/stock/[id]'>) {
   const { id } = await params;
   const sp = await searchParams;
+  const tfRaw = typeof sp.tf === 'string' ? sp.tf : null;
+  const tf: Timeframe = isTimeframe(tfRaw) ? tfRaw : 'day';
   const rangeRaw = typeof sp.range === 'string' ? sp.range : null;
-  const range: RangeKey = isRangeKey(rangeRaw) ? rangeRaw : '1y';
+  // 沒指定期間時依週期給合理的預設：週線看 3 個月只有 13 根，太稀疏
+  const range: RangeKey = isRangeKey(rangeRaw) ? rangeRaw : TIMEFRAMES[tf].defaultRange;
   // 籌碼面要多打兩次 API，只在明確要看時才抓
   const wantChips = sp.pane === 'chips';
 
@@ -55,8 +64,14 @@ export default async function StockPage({
     fetchLiveQuotes([{ stockId: id, market: stock.market }]).catch(() => []),
   ]);
   const live = quotes[0];
-  const bars = barsResult.ok ? barsResult.bars : [];
-  const points = sliceRange(withIndicators(bars, inst, chips), range);
+  const daily = barsResult.ok ? barsResult.bars : [];
+  // 先聚合成週／月 K，再在聚合後的資料上算指標——
+  // 這樣週線的 MA20 才是真的「20 週均線」，而不是 20 日線畫在週圖上。
+  const bars = aggregateBars(daily, tf);
+  const points = sliceRange(
+    withIndicators(bars, aggregateInst(daily, tf, inst), aggregateChips(daily, tf, chips)),
+    range,
+  );
   const last = points[points.length - 1];
   // 籌碼與法人都是盤後才公布，所以最後一根（今天）通常是空的。
   // 卡片要顯示的是「目前已知的最新值」，不是「最後一根 K 棒的值」，
@@ -65,9 +80,11 @@ export default async function StockPage({
   // 法人資料抓不到不影響 K 線，但要讓使用者知道那幾欄為什麼是空的
   const instMissing = barsResult.ok && bars.length > 0 && inst.size === 0;
 
-  // 切換期間時把 pane 帶著走，不然看籌碼時換期間會跳回預設副圖
-  const keep = (r: RangeKey) =>
-    `/stock/${id}?range=${r}${wantChips ? '&pane=chips' : ''}`;
+  // 切換期間／週期時把其他選擇帶著走，不然換一個就會把另一個重置掉
+  const suffix = `${tf === 'day' ? '' : `&tf=${tf}`}${wantChips ? '&pane=chips' : ''}`;
+  const keep = (r: RangeKey) => `/stock/${id}?range=${r}${suffix}`;
+  const keepTf = (t: Timeframe) =>
+    `/stock/${id}?range=${range}${t === 'day' ? '' : `&tf=${t}`}${wantChips ? '&pane=chips' : ''}`;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -93,7 +110,25 @@ export default async function StockPage({
         </p>
       )}
 
-      <div className="my-4 flex flex-wrap gap-1">
+      <div className="mt-4 flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-xs text-zinc-500">週期</span>
+        {(Object.keys(TIMEFRAMES) as Timeframe[]).map((t) => (
+          <Link
+            key={t}
+            href={keepTf(t)}
+            className={`rounded px-3 py-1 text-sm font-medium transition ${
+              t === tf
+                ? 'bg-sky-600 text-white'
+                : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+            }`}
+          >
+            {TIMEFRAMES[t].label}
+          </Link>
+        ))}
+      </div>
+
+      <div className="mb-4 mt-2 flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-xs text-zinc-500">期間</span>
         {(Object.keys(RANGES) as RangeKey[]).map((r) => (
           <Link
             key={r}
@@ -135,7 +170,8 @@ export default async function StockPage({
           <StockChart
             points={points}
             initialPane={wantChips ? 'chips' : 'kd'}
-            chipsHref={`/stock/${id}?range=${range}&pane=chips`}
+            chipsHref={`/stock/${id}?range=${range}${tf === 'day' ? '' : `&tf=${tf}`}&pane=chips`}
+            unit={TIMEFRAMES[tf].unit}
           />
           {instMissing && (
             <p className="mt-2 text-xs text-amber-700 dark:text-amber-500">
@@ -147,7 +183,7 @@ export default async function StockPage({
 
       {last && (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Card title="布林通道（20日,2倍標準差）">
+          <Card title={`布林通道（20${TIMEFRAMES[tf].unit},2倍標準差）`}>
             <Line k="上軌" v={fmt(last.bbUpper)} />
             <Line k="中軌（MA20）" v={fmt(last.ma20)} />
             <Line k="下軌" v={fmt(last.bbLower)} />
@@ -160,7 +196,7 @@ export default async function StockPage({
               }
             />
           </Card>
-          <Card title="法人成本（近20日買超加權均價）">
+          <Card title={`法人成本（近20${TIMEFRAMES[tf].unit}買超加權均價）`}>
             <Line k="外資" v={fmt(last.foreignCost20)} />
             <Line k="投信" v={fmt(last.trustCost20)} />
             <Line
@@ -173,16 +209,16 @@ export default async function StockPage({
             />
             <Line k="外資近20日累計" v={`${fmt(last.foreignNet20, 0)} 張`} />
           </Card>
-          <Card title="市場成本與均線">
-            <Line k="市場成本20日" v={fmt(last.cost20)} />
-            <Line k="市場成本60日" v={fmt(last.cost60)} />
+          <Card title="市場成本">
+            <Line k={`市場成本20${TIMEFRAMES[tf].unit}`} v={fmt(last.cost20)} />
+            <Line k={`市場成本60${TIMEFRAMES[tf].unit}`} v={fmt(last.cost60)} />
             <Line k="當日均價" v={fmt(last.vwap)} />
           </Card>
           <Card title="技術指標">
             <Line k="K / D" v={`${fmt(last.k)} / ${fmt(last.d)}`} />
             <Line k="RSI(14)" v={fmt(last.rsi)} />
             <Line k="MACD 柱" v={fmt(last.osc)} />
-            <Line k="MA5 / 20 / 60" v={`${fmt(last.ma5, 0)} / ${fmt(last.ma20, 0)} / ${fmt(last.ma60, 0)}`} />
+            <Line k="MA5 / 10 / 20" v={`${fmt(last.ma5, 0)} / ${fmt(last.ma10, 0)} / ${fmt(last.ma20, 0)}`} />
           </Card>
           {wantChips && (
             <Card
@@ -208,7 +244,7 @@ export default async function StockPage({
             </Card>
           )}
           <Card title="這段期間">
-            <Line k="K 棒數" v={String(points.length)} />
+            <Line k={`K 棒數（${TIMEFRAMES[tf].label}）`} v={String(points.length)} />
             <Line k="起" v={points[0].date} />
             <Line k="迄" v={last.date} />
             <Line
