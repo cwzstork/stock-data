@@ -76,6 +76,14 @@ export interface Filters {
   minPer5Max: number | null;
   /** 年度 EPS 連續成長年數下限（3 / 5 / 10）*/
   epsGrowMin: number | null;
+  /** ROE 3 / 5 / 10 年平均的下限(%) */
+  roeAvg3Min: number | null;
+  roeAvg5Min: number | null;
+  roeAvg10Min: number | null;
+  /** 近四季自由現金流下限，單位：百萬元 */
+  fcfMin: number | null;
+  /** 盈餘含金量下限(%)：近四季營業現金流 ÷ 稅後淨利 */
+  cfNiMin: number | null;
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -95,6 +103,24 @@ export const MARKET_LABEL: Record<string, string> = {
  * 乘以 4/季別換算成年度基準，才能跟「ROE > 15%」這種條件對得上。
  * 這是近似——旺淡季不均的公司會失真，等十年歷史補完會改用近四季。
  */
+/**
+ * 股本：優先用季報的歷史值。
+ *
+ * `stock_capital` 來自「公司基本資料」，只有最新那一兩期——所以切到 2018 的
+ * 基準日時，股本欄位給的其實是今天的股本，是 look-ahead。
+ * `stock_quarterly.capital_stock` 有逐季歷史（實測 89,517 / 90,231 列、2,445 檔），
+ * 對位規則又是嚴格 period_end <= trade_date，拿到的就是當期的真實股本。
+ * 實測鴻海 2015 年 1,479 億 → 2018 減資到 1,386 億 → 2026 年 1,407 億，確實會變。
+ *
+ * 口徑上有一點差異要知道：季報是「普通股股本」，公司基本資料是「股本合計」
+ * （含特別股）。一般公司兩者差 0.02% 以內，但有發特別股的金控差一成——
+ * 實測富邦金 1,400 億 vs 1,560 億（−10.25%）、國泰金 −9.46%。
+ * 這裡採普通股股本，因為它才有歷史、也才是每股指標的分母。
+ *
+ * 季報沒有的（ETF、興櫃）退回用 stock_capital。
+ */
+const CAPITAL_EXPR = 'COALESCE(q.capital_stock, cap.capital)';
+
 const RATIO = {
   // 累計：同年度各季加總，跟證交所公告的累計數同口徑
   gross_margin: 'CASE WHEN ytd.revenue > 0 THEN ytd.gross_profit * 100.0 / ytd.revenue END',
@@ -175,6 +201,22 @@ const RATIO = {
   est_revenue_low: `CASE WHEN rev.full_ly > 0 AND rev.ytd_ly > 0 AND rev.months BETWEEN 1 AND 12
                       THEN rev.ytd + (rev.full_ly - rev.ytd_ly)
                     END`,
+  // ── 年度值（最新一個四季齊全的年度）──
+  gross_margin_y: 'CASE WHEN af.revenue > 0 THEN af.gross_profit * 100.0 / af.revenue END',
+  op_margin_y: 'CASE WHEN af.revenue > 0 THEN af.op_income * 100.0 / af.revenue END',
+  net_margin_y: 'CASE WHEN af.revenue > 0 THEN af.net_parent * 100.0 / af.revenue END',
+  // 不足 N 年就留空，不要拿 3 年的平均去充當 10 年
+  roe_avg3: 'CASE WHEN af.roe3_n >= 3 THEN af.roe3 END',
+  roe_avg5: 'CASE WHEN af.roe5_n >= 5 THEN af.roe5 END',
+  roe_avg10: 'CASE WHEN af.roe10_n >= 10 THEN af.roe10 END',
+  // ── 現金流量（近四季）──
+  // 自由現金流＝營業活動現金流 ＋ 資本支出（資本支出本來就是負值）
+  fcf_ttm: `CASE WHEN ttm.cf_quarters = 4
+              THEN ttm.cf_operating + COALESCE(ttm.capex, 0) END`,
+  cf_op_ttm: 'CASE WHEN ttm.cf_quarters = 4 THEN ttm.cf_operating END',
+  // 盈餘含金量：營業現金流 ÷ 稅後淨利。長期低於 1 代表賺到的是帳面數字
+  cf_to_ni: `CASE WHEN ttm.cf_quarters = 4 AND ttm.net_income_parent > 0
+               THEN ttm.cf_operating * 100.0 / ttm.net_income_parent END`,
   roe: `CASE WHEN q.equity_parent > 0
           THEN ytd.net_income_parent * 100.0 / q.equity_parent
                * (4.0 / EXTRACT(QUARTER FROM q.period_end))
@@ -190,7 +232,7 @@ const SORT_COLUMNS = {
   dividend_yield: 'd.dividend_yield',
   per: 'd.per',
   pbr: 'd.pbr',
-  capital: 'cap.capital',
+  capital: CAPITAL_EXPR,
   gross_margin: RATIO.gross_margin,
   op_margin: RATIO.op_margin,
   net_margin: RATIO.net_margin,
@@ -232,6 +274,17 @@ const SORT_COLUMNS = {
   min_per5: 'an.min_per5',
   eps_grow: 'eg.streak',
   eps_year: 'eg.last_eps',
+  gross_margin_y: RATIO.gross_margin_y,
+  op_margin_y: RATIO.op_margin_y,
+  net_margin_y: RATIO.net_margin_y,
+  roe_y: 'af.roe',
+  roe_avg3: RATIO.roe_avg3,
+  roe_avg5: RATIO.roe_avg5,
+  roe_avg10: RATIO.roe_avg10,
+  cf_op_ttm: RATIO.cf_op_ttm,
+  fcf_ttm: RATIO.fcf_ttm,
+  capex_ttm: 'ttm.capex',
+  cf_to_ni: RATIO.cf_to_ni,
 } as const;
 
 export type SortKey = keyof typeof SORT_COLUMNS;
@@ -308,6 +361,11 @@ export function parseFilters(params: RawParams): Filters {
     hy10Min: toNumber(toStr(params.hy10Min)),
     minPer5Max: toNumber(toStr(params.minPer5Max)),
     epsGrowMin: toNumber(toStr(params.epsGrowMin)),
+    roeAvg3Min: toNumber(toStr(params.roeAvg3Min)),
+    roeAvg5Min: toNumber(toStr(params.roeAvg5Min)),
+    roeAvg10Min: toNumber(toStr(params.roeAvg10Min)),
+    fcfMin: toNumber(toStr(params.fcfMin)),
+    cfNiMin: toNumber(toStr(params.cfNiMin)),
     sort,
     dir: toStr(params.dir) === 'asc' ? 'asc' : 'desc',
     page: Math.max(1, toNumber(toStr(params.page)) ?? 1),
@@ -382,6 +440,20 @@ export interface ScreenerRow {
   eps_year: string | null;
   /** 前一年度的 EPS，讓成長幅度看得出來 */
   eps_year_prev: string | null;
+  // ── 年度財報值（最新一個四季齊全的年度）──
+  gross_margin_y: string | null;
+  op_margin_y: string | null;
+  net_margin_y: string | null;
+  roe_y: string | null;
+  roe_avg3: string | null;
+  roe_avg5: string | null;
+  roe_avg10: string | null;
+  // ── 現金流量（近四季，單位：元，畫面上再換算百萬）──
+  cf_op_ttm: string | null;
+  fcf_ttm: string | null;
+  capex_ttm: string | null;
+  /** 盈餘含金量 % */
+  cf_to_ni: string | null;
 }
 
 /**
@@ -425,7 +497,8 @@ const QUARTERLY_LATERAL = `
   LEFT JOIN LATERAL (
     SELECT sum(revenue) AS revenue, sum(gross_profit) AS gross_profit,
            sum(operating_income) AS operating_income, sum(net_income_parent) AS net_income_parent,
-           sum(eps) AS eps, count(*) AS quarters
+           sum(eps) AS eps, count(*) AS quarters,
+           sum(cf_operating) AS cf_operating, sum(capex) AS capex
       FROM stock_quarterly yy
      WHERE yy.stock_id = d.stock_id
        AND yy.period_end <= d.trade_date
@@ -435,7 +508,9 @@ const QUARTERLY_LATERAL = `
   LEFT JOIN LATERAL (
     SELECT sum(revenue) AS revenue, sum(gross_profit) AS gross_profit,
            sum(operating_income) AS operating_income, sum(net_income_parent) AS net_income_parent,
-           sum(eps) AS eps, count(*) AS quarters
+           sum(eps) AS eps, count(*) AS quarters,
+           sum(cf_operating) AS cf_operating, sum(capex) AS capex,
+           count(cf_operating) AS cf_quarters
       FROM (
         SELECT * FROM stock_quarterly tt
          WHERE tt.stock_id = d.stock_id AND tt.period_end <= d.trade_date
@@ -573,6 +648,56 @@ const EPS_GROWTH_LATERAL = `
   ) eg ON true`;
 
 /**
+ * 年度財報值與 ROE 多年平均。
+ *
+ * 年度值＝該年四季加總（跟 EPS 連續成長同一個原則），只採四季齊全的年度——
+ * 少一季會把該年低估，而低估的那年會把多年平均一起拖低。
+ *
+ * ROE 的分母用「該年 Q4 的母公司權益」（期末權益）。
+ * 嚴格一點會用期初期末平均，但那要再拉前一年的 Q4，而且遇到第一年就沒有期初值；
+ * 期末權益是多數台股看盤軟體的口徑，對得起來比較重要。
+ *
+ * 多年平均是「先算每年的 ROE 再平均」，不是「總淨利 ÷ 總權益」——
+ * 後者會被權益大的年份主導，失去「這家公司每年穩不穩」的意義。
+ *
+ * rn 是年份由新到舊的名次，所以 rn <= 5 就是最近 5 個完整年度。
+ * 不足 N 年的公司該欄留 null（不會拿 3 年的平均去充當 10 年）。
+ */
+const ANNUAL_FIN_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT max(yr)                                  AS last_year,
+           max(revenue)      FILTER (WHERE rn = 1)  AS revenue,
+           max(gross_profit) FILTER (WHERE rn = 1)  AS gross_profit,
+           max(op_income)    FILTER (WHERE rn = 1)  AS op_income,
+           max(net_parent)   FILTER (WHERE rn = 1)  AS net_parent,
+           max(roe)          FILTER (WHERE rn = 1)  AS roe,
+           avg(roe)          FILTER (WHERE rn <= 3) AS roe3,
+           avg(roe)          FILTER (WHERE rn <= 5) AS roe5,
+           avg(roe)          FILTER (WHERE rn <= 10) AS roe10,
+           count(roe) FILTER (WHERE rn <= 3)::int   AS roe3_n,
+           count(roe) FILTER (WHERE rn <= 5)::int   AS roe5_n,
+           count(roe) FILTER (WHERE rn <= 10)::int  AS roe10_n
+      FROM (
+        SELECT yr, revenue, gross_profit, op_income, net_parent,
+               CASE WHEN equity_end > 0 THEN net_parent * 100.0 / equity_end END AS roe,
+               row_number() OVER (ORDER BY yr DESC) AS rn
+          FROM (
+            SELECT extract(year from a.period_end)::int AS yr,
+                   sum(a.revenue)           AS revenue,
+                   sum(a.gross_profit)      AS gross_profit,
+                   sum(a.operating_income)  AS op_income,
+                   sum(a.net_income_parent) AS net_parent,
+                   max(a.equity_parent) FILTER (
+                     WHERE extract(month from a.period_end) = 12) AS equity_end
+              FROM stock_quarterly a
+             WHERE a.stock_id = d.stock_id AND a.period_end <= d.trade_date
+             GROUP BY 1
+            HAVING count(*) = 4
+          ) y
+      ) z
+  ) af ON true`;
+
+/**
  * 內部人持股。取交易日之前最新公告的那個月。
  *
  * 比例的分母用「已發行普通股數」，不是股本除以 10——
@@ -667,8 +792,8 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   // 畫面上的成交量單位是張，資料庫存的是股
   if (f.volMin !== null) add('d.volume >= ?', Math.round(f.volMin * 1000));
   // 畫面上的股本單位是百萬元，資料庫存的是元
-  if (f.capMin !== null) add('cap.capital >= ?', Math.round(f.capMin * 1e6));
-  if (f.capMax !== null) add('cap.capital <= ?', Math.round(f.capMax * 1e6));
+  if (f.capMin !== null) add(`${CAPITAL_EXPR} >= ?`, Math.round(f.capMin * 1e6));
+  if (f.capMax !== null) add(`${CAPITAL_EXPR} <= ?`, Math.round(f.capMax * 1e6));
 
   // 財報衍生條件。用跟 SELECT 同一份 RATIO 定義，兩邊各寫一次遲早會飄掉。
   if (f.gmMin !== null) add(`(${RATIO.gross_margin}) >= ?`, f.gmMin);
@@ -695,6 +820,14 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   // 連續成長 N 年需要 N+1 個完整年度才判斷得出來。資料不足時 eg.streak 是 NULL，
   // 比較結果也是 NULL、不會通過——正是要的行為：判斷不出來的不要混進結果。
   if (f.epsGrowMin !== null) add('eg.streak >= ?', f.epsGrowMin);
+  // 年數不足的公司 RATIO 會回 NULL，比較結果也是 NULL、不會通過——
+  // 正是要的行為：判斷不出來的不要混進結果。
+  if (f.roeAvg3Min !== null) add(`(${RATIO.roe_avg3}) >= ?`, f.roeAvg3Min);
+  if (f.roeAvg5Min !== null) add(`(${RATIO.roe_avg5}) >= ?`, f.roeAvg5Min);
+  if (f.roeAvg10Min !== null) add(`(${RATIO.roe_avg10}) >= ?`, f.roeAvg10Min);
+  // 畫面上的單位是百萬元，資料庫存的是元
+  if (f.fcfMin !== null) add(`(${RATIO.fcf_ttm}) >= ?`, Math.round(f.fcfMin * 1e6));
+  if (f.cfNiMin !== null) add(`(${RATIO.cf_to_ni}) >= ?`, f.cfNiMin);
   if (f.crMin !== null) add(`(${RATIO.current_ratio}) >= ?`, f.crMin);
   if (f.roaMin !== null) add(`(${RATIO.roa}) >= ?`, f.roaMin);
   if (f.dirMin !== null) add(`(${RATIO.director_pct}) >= ?`, f.dirMin);
@@ -850,7 +983,7 @@ const SELECT_COLS = `
   d.dividend_yield::text AS dividend_yield,
   d.per::text            AS per,
   d.pbr::text            AS pbr,
-  cap.capital::text      AS capital,
+  ${CAPITAL_EXPR}::text      AS capital,
   to_char(q.period_end, 'YYYY-MM-DD')          AS period_end,
   round((${RATIO.gross_margin})::numeric, 2)::text AS gross_margin,
   round((${RATIO.op_margin})::numeric, 2)::text    AS op_margin,
@@ -899,7 +1032,18 @@ const SELECT_COLS = `
   eg.streak::text                                    AS eps_grow,
   eg.last_year::text                                 AS eps_year_last,
   round(eg.last_eps, 2)::text                        AS eps_year,
-  round(eg.prev_eps, 2)::text                        AS eps_year_prev`;
+  round(eg.prev_eps, 2)::text                        AS eps_year_prev,
+  round((${RATIO.gross_margin_y})::numeric, 2)::text AS gross_margin_y,
+  round((${RATIO.op_margin_y})::numeric, 2)::text    AS op_margin_y,
+  round((${RATIO.net_margin_y})::numeric, 2)::text   AS net_margin_y,
+  round(af.roe, 2)::text                             AS roe_y,
+  round((${RATIO.roe_avg3})::numeric, 2)::text       AS roe_avg3,
+  round((${RATIO.roe_avg5})::numeric, 2)::text       AS roe_avg5,
+  round((${RATIO.roe_avg10})::numeric, 2)::text      AS roe_avg10,
+  (${RATIO.cf_op_ttm})::text                         AS cf_op_ttm,
+  (${RATIO.fcf_ttm})::text                           AS fcf_ttm,
+  (CASE WHEN ttm.cf_quarters = 4 THEN ttm.capex END)::text AS capex_ttm,
+  round((${RATIO.cf_to_ni})::numeric, 2)::text       AS cf_to_ni`;
 
 /**
  * 數值欄位一律 cast 成 text 再交給 JS 格式化。
@@ -914,7 +1058,8 @@ const FROM_CLAUSE = `
     ${ANNUAL_LATERAL}
     ${INSIDER_LATERAL}
     ${REVENUE_LATERAL}
-    ${EPS_GROWTH_LATERAL}`;
+    ${EPS_GROWTH_LATERAL}
+    ${ANNUAL_FIN_LATERAL}`;
 
 function baseQuery(where: Where, f: Filters) {
   return `${FROM_CLAUSE}

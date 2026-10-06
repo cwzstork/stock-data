@@ -189,6 +189,19 @@ function buildColumns(p: {
   { key: 'eps_year', label: `EPS(${ey})`, right: true },
   { key: null, label: `EPS(${eyPrev})`, right: true },
 
+  { key: 'gross_margin_y', label: `毛利率(${ey})%`, right: true },
+  { key: 'op_margin_y', label: `營業利益率(${ey})%`, right: true },
+  { key: 'net_margin_y', label: `稅後淨利率(${ey})%`, right: true },
+  { key: 'roe_y', label: `ROE(${ey})%`, right: true },
+  { key: 'roe_avg3', label: 'ROE(近3年平均)%', right: true },
+  { key: 'roe_avg5', label: 'ROE(近5年平均)%', right: true },
+  { key: 'roe_avg10', label: 'ROE(近10年平均)%', right: true },
+
+  { key: 'cf_op_ttm', label: '營業現金流(近四季12個月,百萬)', right: true },
+  { key: 'capex_ttm', label: '資本支出(近四季12個月,百萬)', right: true },
+  { key: 'fcf_ttm', label: '自由現金流(近四季12個月,百萬)', right: true },
+  { key: 'cf_to_ni', label: '盈餘含金量(近四季,營業現金流÷淨利)%', right: true },
+
   { key: 'rev_m_yoy', label: `月營收年增(${rm})%`, right: true },
   { key: 'rev_ytd_yoy', label: `營收年增(${estYear}累計)%`, right: true },
   { key: 'est_eps', label: `預估EPS(${estYear},自算)`, right: true },
@@ -266,6 +279,19 @@ function Row({ r }: { r: ScreenerRow }) {
       {n(r.eps_grow, 0)}
       {nb(r.eps_year)}
       {n(r.eps_year_prev)}
+
+      {n(r.gross_margin_y)}
+      {n(r.op_margin_y)}
+      {n(r.net_margin_y)}
+      {nb(r.roe_y)}
+      {nb(r.roe_avg3)}
+      {nb(r.roe_avg5)}
+      {n(r.roe_avg10)}
+
+      <td className="px-2 py-1 text-right tabular-nums">{scaled(r.cf_op_ttm, 1e6)}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{scaled(r.capex_ttm, 1e6)}</td>
+      <td className="px-2 py-1 text-right tabular-nums font-medium">{scaled(r.fcf_ttm, 1e6)}</td>
+      {n(r.cf_to_ni)}
 
       {n(r.rev_m_yoy)}
       {n(r.rev_ytd_yoy)}
@@ -495,6 +521,31 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
               <option value="5">5 年以上</option>
               <option value="10">10 年以上</option>
             </select>
+          </Field>
+
+          <Field label="ROE 3年平均下限 (%)">
+            <input type="number" step="any" name="roeAvg3Min" defaultValue={f.roeAvg3Min ?? ''}
+              placeholder="例：15" className={inputCls} />
+          </Field>
+
+          <Field label="ROE 5年平均下限 (%)">
+            <input type="number" step="any" name="roeAvg5Min" defaultValue={f.roeAvg5Min ?? ''}
+              placeholder="例：15" className={inputCls} />
+          </Field>
+
+          <Field label="ROE 10年平均下限 (%)">
+            <input type="number" step="any" name="roeAvg10Min" defaultValue={f.roeAvg10Min ?? ''}
+              placeholder="例：12" className={inputCls} />
+          </Field>
+
+          <Field label="自由現金流下限 (百萬)">
+            <input type="number" step="any" name="fcfMin" defaultValue={f.fcfMin ?? ''}
+              placeholder="例：0" className={inputCls} />
+          </Field>
+
+          <Field label="盈餘含金量下限 (%)">
+            <input type="number" step="any" name="cfNiMin" defaultValue={f.cfNiMin ?? ''}
+              placeholder="例：80" className={inputCls} />
           </Field>
 
           <Field label="5年最低PER 上限">

@@ -139,6 +139,25 @@ model StockQuarterly {
   /// 股本合計（元）。有了逐季歷史股本，回看過去日期時就不會拿到今天的股本
   capitalStock      BigInt?  @map("capital_stock")
 
+  // ── 現金流量表（單季）──
+  //
+  // 上游給的是「累計」，跟損益表相反（那邊給單季）。寫入時相減轉成單季：
+  //   Q1單季 = Q1累計　　Q2單季 = Q2累計 − Q1累計　…
+  // 實測台積電 2025：6,256 + 4,970 + 4,269 + 7,255 = 22,750 億，
+  // 與 Q4 累計完全相同，相減無損。
+  //
+  // 存單季的理由跟損益表一樣：累計與近四季都能由單季加總推回來，反過來不行。
+  /// 營業活動之淨現金流入（流出）
+  cfOperating BigInt? @map("cf_operating")
+  /// 投資活動之淨現金流入（流出）
+  cfInvesting BigInt? @map("cf_investing")
+  /// 籌資活動之淨現金流入（流出）
+  cfFinancing BigInt? @map("cf_financing")
+  /// 取得不動產、廠房及設備（資本支出，負值）。金融業通常沒有
+  capex       BigInt?
+  /// 期末現金及約當現金餘額。這是「時點」不是流量，所以不相減，直接存當期值
+  cashEnd     BigInt? @map("cash_end")
+
   stock Stock @relation(fields: [stockId], references: [stockId], onDelete: Cascade)
 
   @@id([stockId, periodEnd])
@@ -187,7 +206,10 @@ model BackfillLog {
   stockId  String   @map("stock_id") @db.VarChar(10)
   /// dividend / financials / balance
   dataset  String   @db.VarChar(30)
-  syncedAt DateTime @map("synced_at")
+  /// 一定要 timestamptz。原本是 timestamp（無時區），驅動把 JS Date 的瞬間
+  /// 寫進去時會少掉時區偏移，讀回來固定差 8 小時——不影響進度判斷
+  /// （只看有沒有這一列），但「最後更新時間」會顯示錯。
+  syncedAt DateTime @map("synced_at") @db.Timestamptz(3)
   /// 抓到幾列，0 表示這檔真的沒有資料（不是失敗）
   rows     Int
 

@@ -29,6 +29,7 @@ import {
   type PriceRow,
 } from '../src/lib/finmind';
 import { appendDaily, finalizeYears, readParquetBaseUrl, readParquetDir } from '../src/lib/parquet';
+import { fetchCashFlows } from '../src/lib/finmind';
 
 try {
   process.loadEnvFile('.env');
@@ -630,6 +631,121 @@ async function runParquet(stockId: string) {
   };
 }
 
+/** 現金流量的欄位別名。各行業的 type 名稱不同，依序試。 */
+const CASHFLOW_ALIASES = {
+  operating: ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities'],
+  investing: ['CashProvidedByInvestingActivities', 'CashFlowsFromInvestingActivities'],
+  financing: ['CashFlowsProvidedFromFinancingActivities', 'CashFlowsFromFinancingActivities'],
+  // 金融業通常沒有這一項，留 null
+  capex: ['PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment'],
+  cashEnd: ['CashBalancesEndOfPeriod'],
+} as const;
+
+interface CashflowRow {
+  stockId: string;
+  periodEnd: string;
+  cfOperating: string | null;
+  cfInvesting: string | null;
+  cfFinancing: string | null;
+  capex: string | null;
+  cashEnd: string | null;
+}
+
+/**
+ * 把「累計」的現金流量轉成「單季」。
+ *
+ * 上游給的是年初至今的累計數，跟損益表相反（那邊直接給單季）。
+ * 實測台積電 2025 四期的期初現金餘額全部相同（2025-01-01 的 21,276 億），
+ * 營業活動 6,256 → 11,226 → 15,495 → 22,750 單調遞增，確定是累計。
+ *
+ * 轉法：Q1 直接用，之後每一期減掉同年度前一期。
+ *   實測 6,256 + 4,970 + 4,269 + 7,255 = 22,750 億 = Q4 累計，相減無損。
+ *
+ * 同年度前一期缺漏時不猜，那一期留 null——寧可沒有也不要給錯的數字。
+ * 期末現金餘額是「時點」不是流量，所以不相減，直接存當期值。
+ */
+function buildCashflows(stockId: string, raw: StatementRow[]): CashflowRow[] {
+  const byDate = collect(raw);
+  const dates = [...byDate.keys()].sort();
+
+  /** 同年度的前一期，沒有就回 undefined */
+  const prevOfYear = (d: string) => {
+    const i = dates.indexOf(d);
+    if (i <= 0) return undefined;
+    const p = dates[i - 1];
+    return p.slice(0, 4) === d.slice(0, 4) ? p : undefined;
+  };
+
+  const out: CashflowRow[] = [];
+  for (const d of dates) {
+    const cur = byDate.get(d);
+    const prevDate = prevOfYear(d);
+    const prev = prevDate ? byDate.get(prevDate) : undefined;
+    const isQ1 = !prevDate;
+
+    /** 累計相減。Q1 直接用；前一期缺這個項目就回 null */
+    const delta = (names: readonly string[]) => {
+      const now = pickNum(cur, names);
+      if (now === null) return null;
+      if (isQ1) return now;
+      const before = pickNum(prev, names);
+      return before === null ? null : now - before;
+    };
+
+    out.push({
+      stockId,
+      periodEnd: d,
+      cfOperating: asText(delta(CASHFLOW_ALIASES.operating)),
+      cfInvesting: asText(delta(CASHFLOW_ALIASES.investing)),
+      cfFinancing: asText(delta(CASHFLOW_ALIASES.financing)),
+      capex: asText(delta(CASHFLOW_ALIASES.capex)),
+      // 時點值，不相減
+      cashEnd: asText(pickNum(cur, CASHFLOW_ALIASES.cashEnd)),
+    });
+  }
+  return out;
+}
+
+async function runCashflow(stockId: string) {
+  const raw = await fetchCashFlows(stockId, START_DATE);
+  const rows = buildCashflows(stockId, raw);
+  if (!COMMIT || rows.length === 0) {
+    return { rows: rows.length, dropped: 0, conflicts: [], note: '' };
+  }
+
+  const c = cols(rows, [
+    (r) => r.stockId,
+    (r) => r.periodEnd,
+    (r) => r.cfOperating,
+    (r) => r.cfInvesting,
+    (r) => r.cfFinancing,
+    (r) => r.capex,
+    (r) => r.cashEnd,
+  ]);
+  // 用 INSERT ... ON CONFLICT 而不是 UPDATE：現金流量的期別偶爾會多於
+  // 損益表（例如剛上市只公告現金流量那一期），那種情況要能自己建列。
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO stock_quarterly
+       (stock_id, period_end, cf_operating, cf_investing, cf_financing, capex, cash_end)
+     SELECT id, pe::date, op::bigint, inv::bigint, fin::bigint, cx::bigint, ce::bigint
+       FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+            AS x(id, pe, op, inv, fin, cx, ce)
+     ON CONFLICT (stock_id, period_end) DO UPDATE SET
+       cf_operating = EXCLUDED.cf_operating, cf_investing = EXCLUDED.cf_investing,
+       cf_financing = EXCLUDED.cf_financing, capex = EXCLUDED.capex,
+       cash_end = EXCLUDED.cash_end`,
+    ...c,
+  );
+
+  const withOp = rows.filter((r) => r.cfOperating !== null).length;
+  return {
+    rows: rows.length,
+    dropped: 0,
+    conflicts: [],
+    note: `${rows[0].periodEnd} ~ ${rows[rows.length - 1].periodEnd}　有營業現金流 ${withOp} 期`,
+  };
+}
+
 // ── 資料集登記 ────────────────────────────────────────────────────
 
 interface Dataset {
@@ -645,6 +761,7 @@ const DATASETS: Dataset[] = [
   { key: 'annual', label: '年度彙總', calls: 2, run: runAnnual },
   { key: 'quarterly', label: '十年季報', calls: 2, run: runQuarterly },
   { key: 'revenue', label: '十年月營收', calls: 1, run: runRevenue },
+  { key: 'cashflow', label: '現金流量', calls: 1, run: runCashflow },
   { key: 'parquet', label: '日頻 Parquet 外存', calls: 1, run: runParquet },
 ];
 

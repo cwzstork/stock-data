@@ -173,7 +173,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 近四季＝最近四季加總；而單季要從累計相減，缺任何一期就算不出來。</p>
 </div>
 
-<h2>二、欄位總表（54 欄）</h2>
+<h2>二、欄位總表（65 欄）</h2>
 
 <h3>識別（4 欄）</h3>
 <div class="scroll"><table>
@@ -222,6 +222,17 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td><strong>EPS連續成長(年)</strong></td><td><span class="tag y">年</span></td><td>年度 EPS 連續成長幾年，見下方</td></tr>
 <tr><td>EPS(2025年)</td><td><span class="tag y">年</span></td><td>最新一個「四季齊全」年度的 EPS（四季加總）</td></tr>
 <tr><td>EPS(2024年)</td><td><span class="tag y">年</span></td><td>前一個完整年度，用來對照成長幅度</td></tr>
+<tr><td><strong>毛利率(2025年)%</strong></td><td><span class="tag y">年</span></td><td>該年四季加總後算的，只採四季齊全的年度</td></tr>
+<tr><td>營業利益率(2025年)%</td><td><span class="tag y">年</span></td><td>同上</td></tr>
+<tr><td>稅後淨利率(2025年)%</td><td><span class="tag y">年</span></td><td>同上</td></tr>
+<tr><td><strong>ROE(2025年)%</strong></td><td><span class="tag y">年</span></td><td>該年淨利加總 ÷ 該年 Q4 的母公司權益（期末權益）</td></tr>
+<tr><td><strong>ROE(近3年平均)%</strong></td><td><span class="tag y">3年</span></td><td>先算每年 ROE 再平均。不足 3 年留空</td></tr>
+<tr><td>ROE(近5年平均)%</td><td><span class="tag y">5年</span></td><td>不足 5 年留空</td></tr>
+<tr><td>ROE(近10年平均)%</td><td><span class="tag y">10年</span></td><td>不足 10 年留空</td></tr>
+<tr><td>營業現金流(近四季,百萬)</td><td><span class="tag q">近四季</span></td><td>四季單季加總。四季不齊就留空</td></tr>
+<tr><td>資本支出(近四季,百萬)</td><td><span class="tag q">近四季</span></td><td>取得不動產廠房及設備，負值。<strong>金融業沒有這一項</strong></td></tr>
+<tr><td><strong>自由現金流(近四季,百萬)</strong></td><td><span class="tag q">近四季</span></td><td>營業現金流 ＋ 資本支出（資本支出本來就是負的）</td></tr>
+<tr><td><strong>盈餘含金量(近四季)%</strong></td><td><span class="tag q">近四季</span></td><td>營業現金流 ÷ 稅後淨利。長期低於 100% 代表賺到的偏帳面數字。淨利為負時留空</td></tr>
 <tr><td>財報期別</td><td>—</td><td>這一列用的是哪一期。空白代表沒有財報（ETF、興櫃）</td></tr>
 </table></div>
 <p>涵蓋 <strong>2015-03-31 ~ 2026-06-30</strong>（46 期，共 <strong>90,231 列</strong>），
@@ -367,13 +378,19 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 差距大是因為歷史日期目前只涵蓋已回補的股票，回補完成後會一起長上來。</p>
 </div>
 
-<div class="box bad">
-<p><strong>② 股本仍有 look-ahead。</strong></p>
-<p>畫面上的「股本(2026-09-28)」來自公司基本資料，只有這一期，
-切到 2018 年會顯示 2026 年的股本。</p>
-<p>季報裡已經有逐季歷史股本（<code>capital_stock</code>），
-但畫面那一欄還沒改接過去——這是待辦第 3 項。</p>
+<div class="box ok">
+<p><strong>② 股本的 look-ahead 已解決（2026-10-06）。</strong>
+股本改接 <code>stock_quarterly.capital_stock</code> 的逐季歷史值，
+對位規則是嚴格 <code>period_end &lt;= 基準日</code>，所以回看過去日期拿到的是當期真實股本。
+實測鴻海：2016 年 <strong>1,733 億</strong> → 2019 年 <strong>1,386 億</strong>（2018 減資）
+→ 2026 年 <strong>1,400 億</strong>，差兩成。</p>
+<p>口徑上有一點差異要知道：季報是<strong>普通股股本</strong>，公司基本資料是<strong>股本合計</strong>
+（含特別股）。一般公司兩者差 0.02% 以內，但有發特別股的金控差一成——
+實測富邦金 1,400 億 vs 1,560 億（−10.25%）、國泰金 −9.46%。
+這裡採普通股股本，因為它才有歷史、也才是每股指標的分母。
+季報沒有的（ETF、興櫃）仍退回用公司基本資料。</p>
 </div>
+
 
 <div class="box">
 <p><strong>③ 董監持股永遠只有當期。</strong>交易所那支 API 只給最新一個月。
@@ -420,34 +437,41 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   舊的 <code>daily-parquet</code>（1,000 個單檔）已可刪除：
   <code>gh release delete daily-parquet -y</code>。</p>
 </div>
-<div>
-  <h4>1. 股本改接季報的歷史值</h4>
-  <small>純改程式，<strong>不用再抓任何資料</strong>。</small>
-  <p>解掉限制 ②（股本的 look-ahead）。
-  已確認 <code>stock_quarterly.capital_stock</code> 有 <strong>89,517 / 90,231 列</strong>
-  （99.2%）、<strong>2,445 檔</strong>，涵蓋 2015-03-31 ~ 2026-06-30，
-  抽查台積電 2,593 億正確。隨時可做。</p>
+<div class="done">
+  <h4>股本改接季報的歷史值</h4>
+  <small>2026-10-06 完成。純改程式，沒有多抓任何資料。</small>
+  <p>解掉限制 ②。改用 <code>stock_quarterly.capital_stock</code>（89,517 / 90,231 列、2,445 檔），
+  對位規則是嚴格 <code>period_end &lt;= 基準日</code>。
+  實測鴻海 2016 年 <strong>1,733 億</strong> → 2019 年 <strong>1,386 億</strong> → 2026 年 <strong>1,400 億</strong>。
+  季報沒有的（ETF、興櫃）退回用公司基本資料。</p>
+</div>
+<div class="done">
+  <h4>年度財報值與 ROE 多年平均</h4>
+  <small>2026-10-06 完成，新增 7 欄。該年四季加總，沒有多抓資料。</small>
+  <p>毛利率(年)、營業利益率(年)、稅後淨利率(年)、ROE(年)，
+  以及 ROE 近 3／5／10 年平均（先算每年 ROE 再平均，不足年數留空）。
+  篩選區也加了三個 ROE 平均的下限。
+  實測台積電 ROE(年) 31.70、3年 27.77、5年 29.06、10年 26.22。</p>
+</div>
+<div class="done">
+  <h4><code>backfill_log.synced_at</code> 改 timestamptz</h4>
+  <small>2026-10-06 完成。</small>
+  <p>原本是 <code>timestamp without time zone</code>，讀回來固定差一個時區偏移。
+  既有資料以 UTC 解讀轉型（回補跑在 UTC runner 上，那些值本來就是對的），
+  之後寫入的會完全正確。</p>
 </div>
 <div>
-  <h4>2. 年度財報值與 ROE 多年平均</h4>
-  <small>該年四季加總即可，<strong>不用再抓任何資料</strong>。</small>
-  <p>可做：2016 毛利率、2016 ROE 這類年度值，以及 ROE 3 年／5 年／10 年平均。
-  已確認資料齊備：<strong>19,384 個完整年度</strong>（2,056 檔），
-  其中 19,231 個有期末權益、17,737 個有淨利，算得出年度 ROE。</p>
-  <p>做完就能加「<strong>ROE 連續 N 年 ≥ 15%</strong>」這類條件，跟 EPS 連續成長搭配用。</p>
+  <h4>1. 現金流量回補（3 / 3,083，約 5.5 小時）</h4>
+  <small>程式已完成並驗證，<strong>已排進佇列自動執行</strong>，每檔 1 次呼叫、實測 46 期。</small>
+  <p>欄位與查詢都已上線（營業現金流、資本支出、自由現金流、盈餘含金量，
+  以及自由現金流與含金量的篩選條件），等資料補齊就會有值。</p>
+  <p><strong>上游給的是累計不是單季</strong>（跟損益表相反），寫入前已相減轉成單季。
+  驗證：台積電 2025 單季 6,256＋4,970＋4,269＋7,255 ＝ 22,750 億，與 Q4 累計完全相同。</p>
 </div>
 <div>
-  <h4>3. 現金流量回補</h4>
-  <small>FinMind <code>TaiwanStockCashFlowsStatement</code>，每檔 1 次呼叫，實測 42 期。約 5.5 小時。</small>
-  <p>解掉 9 欄：營業活動／投資活動／自由現金流量（單季、累計、年度）。</p>
-</div>
-<div>
-  <h4>4. <code>backfill_log.synced_at</code> 差 8 小時</h4>
-  <small>欄位是 <code>timestamp without time zone</code>，寫入時把 runner 的本地時間當成 UTC 存進去。</small>
-  <p>剛寫進去的一列讀回來是 <code>2026-09-29 23:37</code>，而資料庫的 <code>now()</code> 是
-  <code>2026-09-30 07:37</code>——固定差一個時區偏移。
-  <strong>只影響「最後更新時間」的顯示，不影響任何資料正確性</strong>
-  （進度判斷只看有沒有這一列，不看時間）。改成 <code>timestamptz</code> 即可。</p>
+  <h4>2. ROE 連續 N 年達標</h4>
+  <small>年度 ROE 已經算得出來，跟 EPS 連續成長同一套 streak 寫法。</small>
+  <p>可做「ROE 連續 5 年 ≥ 15%」這類條件，跟 EPS 連續成長搭配能篩出長期穩定的公司。</p>
 </div>
 <div class="done">
   <h4>同步時某個市場回空會直接失敗</h4>
@@ -468,11 +492,11 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   跨輪執行用 <code>stock_id</code> 比對合併，重跑不會產生重複列（實測重複 0 筆）。</p>
 </div>
 <div>
-  <h4>5. 定期修剪 stock_daily</h4>
+  <h4>3. 定期修剪 stock_daily</h4>
   <small>見下一節。依修正後的估算大約 2.6 年後才會需要。</small>
 </div>
 <div>
-  <h4>6. 沒有免費來源，不會做</h4>
+  <h4>4. 沒有免費來源，不會做</h4>
   <ul>
     <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API。
       實測 CMoney、鉅亨、Yahoo、玩股網的公開頁面都沒有這個欄位。

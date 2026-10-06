@@ -207,6 +207,25 @@ export async function fetchBalanceSheetFull(
   });
 }
 
+/**
+ * 現金流量表（逐檔）。
+ *
+ * 注意：這一支給的是「累計」，跟損益表相反（那邊給單季）。
+ * 實測台積電 2025 四期的期初現金餘額全部相同（都是 2025-01-01 的 21,276 億），
+ * 營業活動 6,256 → 11,226 → 15,495 → 22,750 單調遞增，確定是累計。
+ *
+ * 所以寫入前要自己相減轉成單季，見 scripts/backfill.ts 的 runCashflow。
+ */
+export async function fetchCashFlows(
+  stockId: string,
+  startDate: string,
+): Promise<StatementRow[]> {
+  return request<StatementRow>('TaiwanStockCashFlowsStatement', {
+    data_id: stockId,
+    start_date: startDate,
+  });
+}
+
 export interface MonthRevenueRow {
   date: string;
   stock_id: string;
