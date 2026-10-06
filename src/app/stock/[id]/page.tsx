@@ -5,6 +5,7 @@ import { fetchLiveQuotes } from '@/lib/live';
 import {
   fetchBars,
   fetchInstMap,
+  fetchChips,
   withIndicators,
   sliceRange,
   RANGES,
@@ -37,6 +38,8 @@ export default async function StockPage({
   const sp = await searchParams;
   const rangeRaw = typeof sp.range === 'string' ? sp.range : null;
   const range: RangeKey = isRangeKey(rangeRaw) ? rangeRaw : '1y';
+  // 籌碼面要多打兩次 API，只在明確要看時才抓
+  const wantChips = sp.pane === 'chips';
 
   const [stock] = await prisma.$queryRawUnsafe<Row[]>(
     `SELECT stock_id, stock_name, market, industry_category FROM stock WHERE stock_id = $1`,
@@ -45,19 +48,26 @@ export default async function StockPage({
   if (!stock) notFound();
 
   // 三者互不相干，一起等就好。任何一個掛掉都不該讓整頁空白
-  const [barsResult, inst, quotes] = await Promise.all([
+  const [barsResult, inst, chips, quotes] = await Promise.all([
     fetchBars(id, START_DATE),
     fetchInstMap(id, START_DATE).catch(() => new Map()),
+    wantChips ? fetchChips(id, START_DATE).catch(() => new Map()) : Promise.resolve(undefined),
     fetchLiveQuotes([{ stockId: id, market: stock.market }]).catch(() => []),
   ]);
   const live = quotes[0];
   const bars = barsResult.ok ? barsResult.bars : [];
-  const points = sliceRange(withIndicators(bars, inst), range);
+  const points = sliceRange(withIndicators(bars, inst, chips), range);
   const last = points[points.length - 1];
+  // 籌碼與法人都是盤後才公布，所以最後一根（今天）通常是空的。
+  // 卡片要顯示的是「目前已知的最新值」，不是「最後一根 K 棒的值」，
+  // 否則盤中整張卡會變成一排「—」，看起來像壞掉。
+  const latestChip = [...points].reverse().find((p) => p.foreignRatio !== null);
   // 法人資料抓不到不影響 K 線，但要讓使用者知道那幾欄為什麼是空的
   const instMissing = barsResult.ok && bars.length > 0 && inst.size === 0;
 
-  const keep = (r: RangeKey) => `/stock/${id}?range=${r}`;
+  // 切換期間時把 pane 帶著走，不然看籌碼時換期間會跳回預設副圖
+  const keep = (r: RangeKey) =>
+    `/stock/${id}?range=${r}${wantChips ? '&pane=chips' : ''}`;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -131,7 +141,11 @@ export default async function StockPage({
 
       {barsResult.ok && (
         <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-          <StockChart points={points} />
+          <StockChart
+            points={points}
+            initialPane={wantChips ? 'chips' : 'kd'}
+            chipsHref={`/stock/${id}?range=${range}&pane=chips`}
+          />
           {instMissing && (
             <p className="mt-2 text-xs text-amber-700 dark:text-amber-500">
               法人買賣超這次沒拿到，所以法人成本與買賣超那幾欄是空的。K 線本身不受影響。
@@ -179,6 +193,29 @@ export default async function StockPage({
             <Line k="MACD 柱" v={fmt(last.osc)} />
             <Line k="MA5 / 20 / 60" v={`${fmt(last.ma5, 0)} / ${fmt(last.ma20, 0)} / ${fmt(last.ma60, 0)}`} />
           </Card>
+          {wantChips && (
+            <Card
+              title={`籌碼面${latestChip && latestChip.date !== last.date ? `（至 ${latestChip.date}）` : ''}`}
+            >
+              <Line
+                k="外資持股比率"
+                v={latestChip ? `${fmt(latestChip.foreignRatio)}%` : '—'}
+              />
+              <Line k="融資餘額" v={latestChip ? `${fmt(latestChip.marginBalance, 0)} 張` : '—'} />
+              <Line k="融券餘額" v={latestChip ? `${fmt(latestChip.shortBalance, 0)} 張` : '—'} />
+              <Line
+                k="外資持股區間變化"
+                v={(() => {
+                  const withFr = points.filter((p) => p.foreignRatio !== null);
+                  if (withFr.length < 2) return '—';
+                  const d =
+                    (withFr[withFr.length - 1].foreignRatio as number) -
+                    (withFr[0].foreignRatio as number);
+                  return `${d >= 0 ? '+' : ''}${fmt(d)} 個百分點`;
+                })()}
+              />
+            </Card>
+          )}
           <Card title="這段期間">
             <Line k="K 棒數" v={String(points.length)} />
             <Line k="起" v={points[0].date} />
@@ -204,6 +241,13 @@ export default async function StockPage({
         <p className="mt-1">
           <b>市場成本</b>＝區間內的成交金額 ÷ 成交股數，也就是<b>全市場</b>的加權平均價位。
           它不分買方賣方，代表的是「所有成交的平均價」，跟特定法人無關。
+        </p>
+        <p className="mt-1">
+          <b>籌碼副圖</b>是外資持股比率（藍）與融資餘額（橘）。
+          分點買賣超與股權分散表在 FinMind 免費層拿不到（回 HTTP 400），
+          但這兩個其實更適合看趨勢——分點只看得到當天，持股比率看得到十年。
+          外資降、融資升代表籌碼從法人流向散戶。
+          這兩筆資料要多打兩次 API，所以只在切到籌碼副圖時才抓。
         </p>
         <p className="mt-1">
           法人買賣超是<b>盤後</b>才公布，所以當天的數字在收盤前會是 0。

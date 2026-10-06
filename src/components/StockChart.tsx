@@ -11,6 +11,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
+import Link from 'next/link';
 import type { ChartPoint } from '@/lib/history';
 
 /**
@@ -47,20 +48,37 @@ const PANES = {
   rsi: { label: 'RSI(14)' },
   macd: { label: 'MACD(12,26,9)' },
   inst: { label: '法人買賣超' },
+  chips: { label: '籌碼（外資持股／融資）' },
 } as const;
 type PaneKey = keyof typeof PANES;
+
+/**
+ * 籌碼副圖的資料要多打兩次 API，所以它走網址（?pane=chips）由伺服器抓，
+ * 其餘幾個都是從 K 線現算的、純前端切換不用重新載入。
+ * 這是刻意的不對稱：不為了選用的功能，在每次瀏覽都付固定成本。
+ */
+const SERVER_PANE: PaneKey = 'chips';
 
 const ts = (d: string) => (Date.parse(d + 'T00:00:00Z') / 1000) as UTCTimestamp;
 const fmt = (v: number | null | undefined, d = 2) =>
   v === null || v === undefined || !Number.isFinite(v) ? '—' : v.toFixed(d);
 const lots = (v: number) => (v / 1000).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
 
-export default function StockChart({ points }: { points: ChartPoint[] }) {
+export default function StockChart({
+  points,
+  initialPane = 'kd',
+  chipsHref,
+}: {
+  points: ChartPoint[];
+  initialPane?: PaneKey;
+  /** 切到籌碼副圖要導去的網址 */
+  chipsHref: string;
+}) {
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<Partial<Record<LineKey, ISeriesApi<'Line'>>>>({});
   const [on, setOn] = useState<Set<LineKey>>(new Set(DEFAULT_ON));
-  const [pane, setPane] = useState<PaneKey>('kd');
+  const [pane, setPane] = useState<PaneKey>(initialPane);
   // null = 游標不在圖上，顯示最後一根
   const [hover, setHover] = useState<ChartPoint | null>(null);
 
@@ -71,6 +89,8 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
   }, [points]);
 
   const shown = hover ?? points[points.length - 1];
+  // 籌碼資料是伺服器視 ?pane=chips 才抓的，沒抓就不顯示相關讀數
+  const hasChips = points.some((p) => p.foreignRatio !== null || p.marginBalance !== null);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -173,6 +193,26 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
               color: (p.osc as number) >= 0 ? 'rgba(220,38,38,.5)' : 'rgba(22,163,74,.5)',
             })),
         );
+      } else if (pane === 'chips') {
+        // 兩者刻度天差地遠（持股比率是 %，融資餘額是張），各用一個價格軸
+        const fr = chart.addSeries(
+          LineSeries,
+          { color: '#0ea5e9', lineWidth: 2, priceScaleId: 'fr', priceLineVisible: false },
+          P,
+        );
+        fr.setData(
+          points.filter((p) => p.foreignRatio !== null)
+            .map((p) => ({ time: ts(p.date), value: p.foreignRatio as number })),
+        );
+        const mg = chart.addSeries(
+          LineSeries,
+          { color: '#f97316', lineWidth: 2, priceScaleId: 'mg', priceLineVisible: false },
+          P,
+        );
+        mg.setData(
+          points.filter((p) => p.marginBalance !== null)
+            .map((p) => ({ time: ts(p.date), value: p.marginBalance as number })),
+        );
       } else if (pane === 'inst') {
         // 外資用柱狀最直觀：紅買綠賣，一眼看出連續買超的區段
         const fo = chart.addSeries(HistogramSeries, { priceLineVisible: false }, P);
@@ -248,6 +288,13 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
           MACD DIF <b>{fmt(shown.dif)}</b> 訊號 <b>{fmt(shown.dem)}</b> 柱{' '}
           <b className={(shown.osc ?? 0) >= 0 ? 'text-red-600' : 'text-green-600'}>{fmt(shown.osc)}</b>
         </span>
+        {hasChips && (
+          <span>
+            外資持股 <b>{fmt(shown.foreignRatio)}%</b>　融資{' '}
+            <b>{fmt(shown.marginBalance, 0)}</b> 張　融券{' '}
+            <b>{fmt(shown.shortBalance, 0)}</b> 張
+          </span>
+        )}
         <span>
           法人淨買超（張）外資{' '}
           <b className={(shown.foreignNet ?? 0) >= 0 ? 'text-red-600' : 'text-green-600'}>
@@ -291,20 +338,26 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
 
       <div className="mb-2 flex flex-wrap items-center gap-1 text-xs">
         <span className="mr-1 text-zinc-500">副圖</span>
-        {(Object.keys(PANES) as PaneKey[]).map((p) => (
-          <button
-            key={p}
-            type="button"
-            onClick={() => setPane(p)}
-            className={`rounded px-2 py-0.5 transition ${
-              p === pane
-                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-                : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300'
-            }`}
-          >
-            {PANES[p].label}
-          </button>
-        ))}
+        {(Object.keys(PANES) as PaneKey[]).map((p) => {
+          const cls = `rounded px-2 py-0.5 transition ${
+            p === pane
+              ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+              : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300'
+          }`;
+          // 籌碼的資料不在這張圖裡，要回伺服器拿，所以是連結不是按鈕
+          if (p === SERVER_PANE && !hasChips) {
+            return (
+              <Link key={p} href={chipsHref} className={cls} prefetch={false}>
+                {PANES[p].label}
+              </Link>
+            );
+          }
+          return (
+            <button key={p} type="button" onClick={() => setPane(p)} className={cls}>
+              {PANES[p].label}
+            </button>
+          );
+        })}
       </div>
 
       <div ref={boxRef} className={pane === 'none' ? 'h-[460px] w-full' : 'h-[600px] w-full'} />

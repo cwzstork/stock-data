@@ -257,6 +257,54 @@ export async function fetchInstitutional(
   });
 }
 
+export interface ShareholdingRow {
+  date: string;
+  stock_id: string;
+  /** 外資及陸資持股比率(%) */
+  ForeignInvestmentSharesRatio: number;
+  /** 已發行股數 */
+  NumberOfSharesIssued: number;
+}
+
+/**
+ * 外資持股比率（逐檔逐日）。證交所的「外資及陸資持股統計」。
+ *
+ * 這是籌碼面的長期訊號：分點買賣超只看得到當天，持股比率看得到趨勢。
+ * 實測台積電 2015 年 77.32% → 2022 年 70.84% → 2026 年 69.17%。
+ */
+export async function fetchShareholding(
+  stockId: string,
+  startDate: string,
+): Promise<ShareholdingRow[]> {
+  return request<ShareholdingRow>('TaiwanStockShareholding', {
+    data_id: stockId,
+    start_date: startDate,
+  });
+}
+
+export interface MarginRow {
+  date: string;
+  stock_id: string;
+  /** 融資今日餘額（張） */
+  MarginPurchaseTodayBalance: number;
+  /** 融券今日餘額（張） */
+  ShortSaleTodayBalance: number;
+}
+
+/**
+ * 融資融券餘額（逐檔逐日）。
+ *
+ * 散戶籌碼的代表指標——融資是借錢買股，部位重的多半是散戶。
+ * 跟外資持股比率一起看最有意義：外資降、融資升，
+ * 代表籌碼正從法人流向散戶。
+ */
+export async function fetchMargin(stockId: string, startDate: string): Promise<MarginRow[]> {
+  return request<MarginRow>('TaiwanStockMarginPurchaseShortSale', {
+    data_id: stockId,
+    start_date: startDate,
+  });
+}
+
 export interface MonthRevenueRow {
   date: string;
   stock_id: string;

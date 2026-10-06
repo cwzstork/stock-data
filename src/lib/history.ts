@@ -18,7 +18,14 @@
  * 有一層行程內快取，因為同一檔在不同期間之間切換時不該重打 API。
  */
 
-import { FinMindError, fetchPriceHistory, fetchInstitutional, type PriceRow } from './finmind';
+import {
+  FinMindError,
+  fetchPriceHistory,
+  fetchInstitutional,
+  fetchShareholding,
+  fetchMargin,
+  type PriceRow,
+} from './finmind';
 
 export interface Bar {
   /** YYYY-MM-DD */
@@ -64,6 +71,20 @@ export interface ChartPoint extends Bar {
   dif: number | null;
   dem: number | null;
   osc: number | null;
+  // ── 籌碼面（要多打兩次 API，所以只在切到籌碼副圖時才抓）──
+  /** 外資及陸資持股比率(%) */
+  foreignRatio: number | null;
+  /** 融資餘額（張） */
+  marginBalance: number | null;
+  /** 融券餘額（張） */
+  shortBalance: number | null;
+}
+
+/** 一天的籌碼面資料 */
+export interface ChipDay {
+  foreignRatio: number | null;
+  margin: number | null;
+  short: number | null;
 }
 
 /** 一天的法人買賣超，已歸類成台股習慣的三類（單位：股） */
@@ -160,6 +181,58 @@ export async function fetchInstMap(
     // 法人資料沒拿到就留空，線圖其餘部分照常
   }
   instCache.set(stockId, { at: Date.now(), byDate });
+  return byDate;
+}
+
+const chipCache = new Map<string, { at: number; byDate: Map<string, ChipDay> }>();
+
+/**
+ * 籌碼面：外資持股比率 ＋ 融資融券餘額。
+ *
+ * 這兩支各要一次呼叫，所以<strong>刻意不在預設路徑上抓</strong>——
+ * 只有切到「籌碼」副圖（走網址 ?pane=chips）時才會打。
+ * 預設瀏覽維持 2 次呼叫，不為了選用的功能付固定成本。
+ *
+ * 注意分點買賣超（TaiwanStockTradingDailyReport）與股權分散表
+ * （TaiwanStockHoldingSharesPer）在 FinMind 免費層是擋住的，回 HTTP 400。
+ * 所以「籌碼集中度」只能用這兩個替代——反而更適合看趨勢：
+ * 分點只看得到當天，持股比率看得到十年。
+ */
+export async function fetchChips(
+  stockId: string,
+  startDate: string,
+): Promise<Map<string, ChipDay>> {
+  const hit = chipCache.get(stockId);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.byDate;
+
+  const byDate = new Map<string, ChipDay>();
+  const touch = (d: string) => {
+    let r = byDate.get(d);
+    if (!r) byDate.set(d, (r = { foreignRatio: null, margin: null, short: null }));
+    return r;
+  };
+
+  // 兩支互不相干，一支掛掉不該讓另一支也沒有
+  const [sh, mg] = await Promise.allSettled([
+    fetchShareholding(stockId, startDate),
+    fetchMargin(stockId, startDate),
+  ]);
+  if (sh.status === 'fulfilled') {
+    for (const r of sh.value) {
+      const v = Number(r.ForeignInvestmentSharesRatio);
+      if (Number.isFinite(v)) touch(r.date).foreignRatio = v;
+    }
+  }
+  if (mg.status === 'fulfilled') {
+    for (const r of mg.value) {
+      const t = touch(r.date);
+      const m = Number(r.MarginPurchaseTodayBalance);
+      const sv = Number(r.ShortSaleTodayBalance);
+      if (Number.isFinite(m)) t.margin = m;
+      if (Number.isFinite(sv)) t.short = sv;
+    }
+  }
+  chipCache.set(stockId, { at: Date.now(), byDate });
   return byDate;
 }
 
@@ -317,6 +390,7 @@ function instCost(
 export function withIndicators(
   bars: Bar[],
   inst?: Map<string, InstDay>,
+  chips?: Map<string, ChipDay>,
 ): ChartPoint[] {
   const closes = bars.map((b) => b.close);
 
@@ -376,6 +450,9 @@ export function withIndicators(
       dif: dif[i],
       dem: dem[i],
       osc: dif[i] !== null && dem[i] !== null ? (dif[i] as number) - (dem[i] as number) : null,
+      foreignRatio: chips?.get(b.date)?.foreignRatio ?? null,
+      marginBalance: chips?.get(b.date)?.margin ?? null,
+      shortBalance: chips?.get(b.date)?.short ?? null,
     };
   });
 }
