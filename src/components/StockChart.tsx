@@ -29,14 +29,26 @@ const LINES = {
   ma60: { color: '#8b5cf6', label: 'MA60' },
   bbUpper: { color: '#94a3b8', label: '布林上軌' },
   bbLower: { color: '#94a3b8', label: '布林下軌' },
-  cost20: { color: '#ec4899', label: '主力成本20日' },
-  cost60: { color: '#14b8a6', label: '主力成本60日' },
+  cost20: { color: '#ec4899', label: '市場成本20日' },
+  cost60: { color: '#14b8a6', label: '市場成本60日' },
+  foreignCost20: { color: '#0ea5e9', label: '外資成本20日' },
+  trustCost20: { color: '#f97316', label: '投信成本20日' },
 } as const;
 
 type LineKey = keyof typeof LINES;
 
 /** 預設開啟的線。全開會糊成一團，所以只先開最常看的 */
-const DEFAULT_ON: LineKey[] = ['ma20', 'bbUpper', 'bbLower', 'cost20'];
+const DEFAULT_ON: LineKey[] = ['ma20', 'bbUpper', 'bbLower', 'foreignCost20'];
+
+/** 下方副圖可以選哪一個。放在獨立窗格，因為刻度跟股價完全不同 */
+const PANES = {
+  none: { label: '不顯示' },
+  kd: { label: 'KD(9,3,3)' },
+  rsi: { label: 'RSI(14)' },
+  macd: { label: 'MACD(12,26,9)' },
+  inst: { label: '法人買賣超' },
+} as const;
+type PaneKey = keyof typeof PANES;
 
 const ts = (d: string) => (Date.parse(d + 'T00:00:00Z') / 1000) as UTCTimestamp;
 const fmt = (v: number | null | undefined, d = 2) =>
@@ -48,6 +60,7 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<Partial<Record<LineKey, ISeriesApi<'Line'>>>>({});
   const [on, setOn] = useState<Set<LineKey>>(new Set(DEFAULT_ON));
+  const [pane, setPane] = useState<PaneKey>('kd');
   // null = 游標不在圖上，顯示最後一根
   const [hover, setHover] = useState<ChartPoint | null>(null);
 
@@ -129,6 +142,54 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
     }
     seriesRef.current = lineSeries;
 
+    // ── 副圖（獨立窗格，刻度跟股價無關）──
+    if (pane !== 'none') {
+      const P = 1;
+      const add = (color: string, key: keyof ChartPoint, width: 1 | 2 = 2) => {
+        const ser = chart.addSeries(
+          LineSeries,
+          { color, lineWidth: width, priceLineVisible: false, lastValueVisible: false },
+          P,
+        );
+        ser.setData(
+          points.filter((p) => p[key] !== null).map((p) => ({ time: ts(p.date), value: p[key] as number })),
+        );
+      };
+      if (pane === 'kd') {
+        add('#dc2626', 'k');
+        add('#2563eb', 'd');
+      } else if (pane === 'rsi') {
+        add('#7c3aed', 'rsi');
+      } else if (pane === 'macd') {
+        add('#dc2626', 'dif');
+        add('#2563eb', 'dem');
+        const osc = chart.addSeries(HistogramSeries, { priceLineVisible: false }, P);
+        osc.setData(
+          points
+            .filter((p) => p.osc !== null)
+            .map((p) => ({
+              time: ts(p.date),
+              value: p.osc as number,
+              color: (p.osc as number) >= 0 ? 'rgba(220,38,38,.5)' : 'rgba(22,163,74,.5)',
+            })),
+        );
+      } else if (pane === 'inst') {
+        // 外資用柱狀最直觀：紅買綠賣，一眼看出連續買超的區段
+        const fo = chart.addSeries(HistogramSeries, { priceLineVisible: false }, P);
+        fo.setData(
+          points
+            .filter((p) => p.foreignNet !== null)
+            .map((p) => ({
+              time: ts(p.date),
+              value: p.foreignNet as number,
+              color: (p.foreignNet as number) >= 0 ? 'rgba(220,38,38,.6)' : 'rgba(22,163,74,.6)',
+            })),
+        );
+        add('#f97316', 'trustNet', 1);
+      }
+      chart.panes()[P]?.setHeight(130);
+    }
+
     chart.subscribeCrosshairMove((param) => {
       const t = param.time as number | undefined;
       setHover(t === undefined ? null : (byTime.get(t) ?? null));
@@ -140,7 +201,7 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
       chartRef.current = null;
       seriesRef.current = {};
     };
-  }, [points, byTime]);
+  }, [points, byTime, pane]);
 
   // 切換線條只改 visible，不重建整張圖——重建會把使用者拉好的縮放位置清掉
   useEffect(() => {
@@ -175,6 +236,34 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
         <span className="text-zinc-500">均價 {fmt(shown.vwap)}</span>
       </div>
 
+      {/* 游標那一天的震盪指標與法人動向 */}
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-zinc-500">
+        <span>
+          K <b>{fmt(shown.k)}</b> / D <b>{fmt(shown.d)}</b>
+        </span>
+        <span>
+          RSI <b>{fmt(shown.rsi)}</b>
+        </span>
+        <span>
+          MACD DIF <b>{fmt(shown.dif)}</b> 訊號 <b>{fmt(shown.dem)}</b> 柱{' '}
+          <b className={(shown.osc ?? 0) >= 0 ? 'text-red-600' : 'text-green-600'}>{fmt(shown.osc)}</b>
+        </span>
+        <span>
+          法人淨買超（張）外資{' '}
+          <b className={(shown.foreignNet ?? 0) >= 0 ? 'text-red-600' : 'text-green-600'}>
+            {fmt(shown.foreignNet, 0)}
+          </b>
+          　投信{' '}
+          <b className={(shown.trustNet ?? 0) >= 0 ? 'text-red-600' : 'text-green-600'}>
+            {fmt(shown.trustNet, 0)}
+          </b>
+          　自營{' '}
+          <b className={(shown.dealerNet ?? 0) >= 0 ? 'text-red-600' : 'text-green-600'}>
+            {fmt(shown.dealerNet, 0)}
+          </b>
+        </span>
+      </div>
+
       <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
         {(Object.keys(LINES) as LineKey[]).map((k) => (
           <button
@@ -200,7 +289,25 @@ export default function StockChart({ points }: { points: ChartPoint[] }) {
         ))}
       </div>
 
-      <div ref={boxRef} className="h-[460px] w-full" />
+      <div className="mb-2 flex flex-wrap items-center gap-1 text-xs">
+        <span className="mr-1 text-zinc-500">副圖</span>
+        {(Object.keys(PANES) as PaneKey[]).map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => setPane(p)}
+            className={`rounded px-2 py-0.5 transition ${
+              p === pane
+                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300'
+            }`}
+          >
+            {PANES[p].label}
+          </button>
+        ))}
+      </div>
+
+      <div ref={boxRef} className={pane === 'none' ? 'h-[460px] w-full' : 'h-[600px] w-full'} />
 
       <p className="mt-2 text-xs text-zinc-500">
         滑鼠移動看各日數字　·　拖曳平移　·　滾輪縮放　·　點上方圖例可開關線條

@@ -765,8 +765,15 @@ const DATASETS: Dataset[] = [
   { key: 'parquet', label: '日頻 Parquet 外存', calls: 1, run: runParquet },
 ];
 
-/** FinMind register 層的文件額度是 600 次/小時，留一點餘裕給每日同步 */
-const CALLS_PER_HOUR = Number(flag('rate') ?? 560);
+/**
+ * FinMind register 層的文件額度是 600 次/小時。
+ *
+ * 這裡只用 480，把 120 次/小時留給「互動式」的用途——
+ * 個股線圖（/stock/[id]）每開一檔要打 1~2 次 API，而回補是背景工作，
+ * 慢 17% 沒人會感覺到，線圖載不出來卻是當場就看得見的。
+ * 背景工作不該把前台的額度吃光，這是刻意讓出來的。
+ */
+const CALLS_PER_HOUR = Number(flag('rate') ?? 480);
 
 /**
  * 單次執行要跑多久。

@@ -226,6 +226,37 @@ export async function fetchCashFlows(
   });
 }
 
+export interface InstitutionalRow {
+  date: string;
+  stock_id: string;
+  /** 買進股數 */
+  buy: number;
+  /** 賣出股數 */
+  sell: number;
+  /** Foreign_Investor / Investment_Trust / Dealer_self / Dealer_Hedging / Foreign_Dealer_Self */
+  name: string;
+}
+
+/**
+ * 三大法人買賣超（逐檔逐日）。單位是股數不是張數。
+ *
+ * name 有五種，台股習慣的歸類是：
+ *   外資   Foreign_Investor ＋ Foreign_Dealer_Self
+ *   投信   Investment_Trust
+ *   自營商 Dealer_self ＋ Dealer_Hedging（自行買賣 ＋ 避險）
+ *
+ * 實測台積電十年份 13,596 列、244 ms——一次呼叫就夠，不用分批。
+ */
+export async function fetchInstitutional(
+  stockId: string,
+  startDate: string,
+): Promise<InstitutionalRow[]> {
+  return request<InstitutionalRow>('TaiwanStockInstitutionalInvestorsBuySell', {
+    data_id: stockId,
+    start_date: startDate,
+  });
+}
+
 export interface MonthRevenueRow {
   date: string;
   stock_id: string;

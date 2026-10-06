@@ -2,7 +2,15 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import { fetchLiveQuotes } from '@/lib/live';
-import { fetchBars, withIndicators, sliceRange, RANGES, isRangeKey, type RangeKey } from '@/lib/history';
+import {
+  fetchBars,
+  fetchInstMap,
+  withIndicators,
+  sliceRange,
+  RANGES,
+  isRangeKey,
+  type RangeKey,
+} from '@/lib/history';
 import { MARKET_LABEL } from '@/lib/screener';
 import StockChart from '@/components/StockChart';
 
@@ -36,13 +44,14 @@ export default async function StockPage({
   );
   if (!stock) notFound();
 
-  // 線圖資料與即時報價互不相干，一起等就好
-  const [bars, quotes] = await Promise.all([
+  // 三者互不相干，一起等就好。任何一個掛掉都不該讓整頁空白
+  const [bars, inst, quotes] = await Promise.all([
     fetchBars(id, START_DATE).catch(() => []),
+    fetchInstMap(id, START_DATE).catch(() => new Map()),
     fetchLiveQuotes([{ stockId: id, market: stock.market }]).catch(() => []),
   ]);
   const live = quotes[0];
-  const points = sliceRange(withIndicators(bars), range);
+  const points = sliceRange(withIndicators(bars, inst), range);
   const last = points[points.length - 1];
 
   const keep = (r: RangeKey) => `/stock/${id}?range=${r}`;
@@ -115,19 +124,29 @@ export default async function StockPage({
               }
             />
           </Card>
-          <Card title="主力成本（成交金額÷成交股數）">
-            <Line k="近 20 日" v={fmt(last.cost20)} />
-            <Line k="近 60 日" v={fmt(last.cost60)} />
+          <Card title="法人成本（近20日買超加權均價）">
+            <Line k="外資" v={fmt(last.foreignCost20)} />
+            <Line k="投信" v={fmt(last.trustCost20)} />
             <Line
-              k="現價相對 20 日"
-              v={last.cost20 ? `${fmt(((last.close / last.cost20) - 1) * 100)}%` : '—'}
+              k="現價相對外資成本"
+              v={
+                last.foreignCost20
+                  ? `${fmt((last.close / last.foreignCost20 - 1) * 100)}%`
+                  : '—'
+              }
             />
+            <Line k="外資近20日累計" v={`${fmt(last.foreignNet20, 0)} 張`} />
+          </Card>
+          <Card title="市場成本與均線">
+            <Line k="市場成本20日" v={fmt(last.cost20)} />
+            <Line k="市場成本60日" v={fmt(last.cost60)} />
             <Line k="當日均價" v={fmt(last.vwap)} />
           </Card>
-          <Card title="均線">
-            <Line k="MA5" v={fmt(last.ma5)} />
-            <Line k="MA20" v={fmt(last.ma20)} />
-            <Line k="MA60" v={fmt(last.ma60)} />
+          <Card title="技術指標">
+            <Line k="K / D" v={`${fmt(last.k)} / ${fmt(last.d)}`} />
+            <Line k="RSI(14)" v={fmt(last.rsi)} />
+            <Line k="MACD 柱" v={fmt(last.osc)} />
+            <Line k="MA5 / 20 / 60" v={`${fmt(last.ma5, 0)} / ${fmt(last.ma20, 0)} / ${fmt(last.ma60, 0)}`} />
           </Card>
           <Card title="這段期間">
             <Line k="K 棒數" v={String(points.length)} />
@@ -143,14 +162,21 @@ export default async function StockPage({
 
       <div className="mt-6 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
         <p>
-          <b>「主力成本」是近似值。</b>
-          真正的主力成本要有法人或分點的買賣超資料，那是付費的。
-          這裡用的是<b>區間內的成交金額 ÷ 成交股數</b>——也就是這段期間所有成交的加權平均價位，
-          量大的日子自然佔比較重。分子分母都是官方數字，算式也看得見，
-          但它代表的是「全市場的平均成本」，不是「特定主力的成本」。
+          <b>兩種「成本」不一樣，別混用。</b>
         </p>
         <p className="mt-1">
-          線圖資料來自 FinMind 的日線，每檔一次呼叫、不進資料庫。顏色用台股慣例：紅漲綠跌。
+          <b>法人成本</b>＝近 20 日裡<b>有買超的那幾天</b>，用當日淨買超股數加權當日均價。
+          只算買超日是刻意的——這一條回答的是「他們在什麼價位買進」，
+          把賣超日也算進去會變成買賣相抵後的殘值，失去成本的意義。
+          這是用三大法人的實際買賣超算的，不是近似。
+        </p>
+        <p className="mt-1">
+          <b>市場成本</b>＝區間內的成交金額 ÷ 成交股數，也就是<b>全市場</b>的加權平均價位。
+          它不分買方賣方，代表的是「所有成交的平均價」，跟特定法人無關。
+        </p>
+        <p className="mt-1">
+          法人買賣超是<b>盤後</b>才公布，所以當天的數字在收盤前會是 0。
+          線圖與法人資料都來自 FinMind，每檔各一次呼叫、不進資料庫。顏色用台股慣例：紅漲綠跌。
         </p>
       </div>
     </main>
