@@ -243,8 +243,17 @@ function Row({ r }: { r: ScreenerRow }) {
   );
   return (
     <tr className="border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60">
-      <td className="px-2 py-1 font-mono">{r.stock_id}</td>
-      <td className="px-2 py-1 whitespace-nowrap">{r.stock_name}</td>
+      {/* 點股號或股名進個股線圖 */}
+      <td className="px-2 py-1 font-mono">
+        <Link href={`/stock/${r.stock_id}`} className="text-sky-700 hover:underline dark:text-sky-400">
+          {r.stock_id}
+        </Link>
+      </td>
+      <td className="px-2 py-1 whitespace-nowrap">
+        <Link href={`/stock/${r.stock_id}`} className="text-sky-700 hover:underline dark:text-sky-400">
+          {r.stock_name}
+        </Link>
+      </td>
       <td className="px-2 py-1 whitespace-nowrap text-zinc-500">
         {MARKET_LABEL[r.market] ?? r.market}
       </td>

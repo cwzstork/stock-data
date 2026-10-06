@@ -8,6 +8,7 @@
 |---|---|
 | `/` | 68 欄篩選器。條件存在網址上，可命名存起來、可匯出 CSV |
 | `/live` | 即時報價（證交所 MIS，約延遲 20 秒）。中文模糊搜尋＋多選 |
+| `/stock/[id]` | **個股技術線圖**。K 線、布林通道、均線、主力成本、成交量。十字游標顯示該日所有數字，可拖曳平移與滾輪縮放 |
 | `/api/export` | 同條件的 CSV 匯出，含 BOM，Excel 直接開 |
 | `/api/search` | 股票搜尋，給多選器用 |
 
@@ -28,6 +29,7 @@
 | 層 | 用什麼 | 免費額度 |
 |---|---|---|
 | 前端 / 後端 | Next.js 16（App Router，幾乎全 server component） | — |
+| 線圖 | lightweight-charts（TradingView 開源版） | — |
 | 資料庫 | Neon PostgreSQL 18 | 0.5 GB |
 | 日頻明細 | Parquet on GitHub Release | 單檔 2 GB、每個 release 1,000 個檔，不計入 repo |
 | 每日同步 / 歷史回補 | GitHub Actions | 公開 repo 免費 |
@@ -38,10 +40,12 @@ src/
   app/
     page.tsx              篩選器
     live/page.tsx         即時報價
+    stock/[id]/page.tsx   個股技術線圖
     api/export/route.ts   CSV 匯出
     api/search/route.ts   股票搜尋
   components/
-    StockPicker.tsx       多選器（唯一的 client component）
+    StockPicker.tsx       多選器（client component）
+    StockChart.tsx        K 線圖（client component）
   lib/
     prisma.ts             PrismaClient（延遲初始化 + driver adapter）
     screener.ts           篩選條件解析與查詢組裝
@@ -50,6 +54,7 @@ src/
     mops.ts               季頻財報（證交所口徑，已停用，見「資料來源」）
     finmind.ts            FinMind API
     live.ts               證交所 MIS 即時報價
+    history.ts            線圖的日線與技術指標（布林、均線、主力成本）
     parquet.ts            日頻明細轉 Parquet（DuckDB）
     http.ts               帶重試的 fetch、併發限制
 scripts/
