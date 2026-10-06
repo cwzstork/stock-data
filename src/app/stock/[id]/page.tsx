@@ -71,15 +71,6 @@ export default async function StockPage({
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Link href="/live" className="text-sm text-zinc-500 hover:underline">
-          ← 即時報價
-        </Link>
-        <Link href="/" className="text-sm text-zinc-500 hover:underline">
-          台股篩選器
-        </Link>
-      </div>
-
       <h1 className="flex flex-wrap items-baseline gap-x-3">
         <span className="font-mono text-2xl text-zinc-500">{stock.stock_id}</span>
         <span className="text-2xl font-bold">{stock.stock_name}</span>

@@ -8,6 +8,8 @@ export const dynamic = 'force-dynamic';
 
 /** 一次查太多會拖慢頁面，也對證交所不禮貌 */
 const MAX = 60;
+/** 首次進來預設載入幾檔權值股。MAX 是 60，留一點空間讓人再加自己的 */
+const DEFAULT_TOP = 50;
 
 const dash = <span className="text-zinc-400 dark:text-zinc-600">—</span>;
 
@@ -83,21 +85,52 @@ async function resolveExact(ids: string[]): Promise<Matched[]> {
   );
 }
 
+/**
+ * 市值前 50 大的上市股票，當作首次進來的預設清單。
+ *
+ * 用「收盤價 × 已發行股數」現算，不寫死清單——成分每年都會變，
+ * 寫死的清單過一陣子就會混進已經不是權值股的公司。
+ *
+ * 只取上市（twse）而且股號是四碼純數字：這一刀同時濾掉 ETF
+ * （00 開頭、五到六碼）與特別股（2881A 這種），它們不是「權值股」的概念。
+ *
+ * 實測是台積電、聯發科、台達電、鴻海、日月光…合計市值約 129 兆，
+ * 跟台灣 50 的成分高度重疊。
+ */
+async function topByMarketCap(limit: number): Promise<Matched[]> {
+  return prisma.$queryRawUnsafe<Matched[]>(
+    `SELECT s.stock_id, s.stock_name, s.market, s.stock_id AS term, 0 AS rank
+       FROM stock s
+       JOIN LATERAL (SELECT close FROM stock_daily x
+                      WHERE x.stock_id = s.stock_id AND x.close > 0
+                      ORDER BY trade_date DESC LIMIT 1) d ON true
+       JOIN LATERAL (SELECT issued_shares FROM stock_capital y
+                      WHERE y.stock_id = s.stock_id AND y.issued_shares > 0
+                      ORDER BY report_date DESC LIMIT 1) k ON true
+      WHERE s.market = 'twse' AND s.stock_id ~ '^[0-9]{4}$'
+      ORDER BY d.close * k.issued_shares DESC
+      LIMIT ${Number(limit)}`,
+  );
+}
+
 export default async function LivePage({ searchParams }: PageProps<'/live'>) {
   const params = (await searchParams) as Record<string, string | string[] | undefined>;
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   // ids 是多選器送出的明確選取；q 是直接打在網址上的自由文字，保留給分享連結用
   const idsParam = one(params.ids);
   const qParam = one(params.q);
-  // 預設是空的——自選清單沒有「合理的預設」，隨便塞幾檔進去
-  // 只會讓人每次都要先刪掉
+  // 網址上完全沒帶參數時，給市值前 50 大當起始畫面——一進來就看得到東西。
+  // 但只要使用者動過選擇（ids 或 q 出現過，哪怕是空字串），就完全尊重他的選擇：
+  // 把自己的清單清空時，不該又跳出 50 檔要他再刪一次。
+  const untouched = qParam === undefined && idsParam === undefined;
   const raw = qParam ?? idsParam ?? '';
 
   // 逗號、全形逗號、頓號、空白都當分隔
   const terms = [...new Set(raw.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean))];
 
-  const matched =
-    qParam === undefined && idsParam !== undefined
+  const matched = untouched
+    ? await topByMarketCap(DEFAULT_TOP)
+    : qParam === undefined && idsParam !== undefined
       ? await resolveExact(terms)
       : await resolveFuzzy(terms);
   // rank 小的優先，同 rank 依股號；超過上限就截斷並提示
@@ -107,7 +140,7 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
 
   const hitTerms = new Set(matched.map((m) => m.term));
   const missTerms = terms.filter((t) => !hitTerms.has(t));
-  const empty = terms.length === 0;
+  const empty = terms.length === 0 && !untouched;
 
   const nameOf = new Map(picked.map((m) => [m.stock_id, m.stock_name]));
   const marketOf = new Map(picked.map((m) => [m.stock_id, m.market]));
@@ -136,9 +169,6 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
             混入盤中價會讓歷史資料失去意義。
           </p>
         </div>
-        <Link href="/" className="text-sm text-zinc-500 hover:underline">
-          ← 回篩選器
-        </Link>
       </header>
 
       <form method="get" className="mb-2 flex flex-wrap items-start gap-2">

@@ -7,7 +7,7 @@
 | 頁面 | 內容 |
 |---|---|
 | `/` | 68 欄篩選器。條件存在網址上，可命名存起來、可匯出 CSV |
-| `/live` | 即時報價（證交所 MIS，約延遲 20 秒）。中文模糊搜尋＋多選 |
+| `/live` | 即時報價（證交所 MIS，約延遲 20 秒）。中文模糊搜尋＋多選，**預設載入市值前 50 大** |
 | `/stock/[id]` | **個股技術線圖**。K 線、布林通道、均線、法人成本、成交量，副圖可切 KD／RSI／MACD／法人買賣超／籌碼。十字游標顯示該日所有數字，可拖曳平移與滾輪縮放 |
 | `/api/export` | 同條件的 CSV 匯出，含 BOM，Excel 直接開 |
 | `/api/search` | 股票搜尋，給多選器用 |
@@ -44,6 +44,7 @@ src/
     api/export/route.ts   CSV 匯出
     api/search/route.ts   股票搜尋
   components/
+    AppNav.tsx            全站頂部導覽（client component）
     StockPicker.tsx       多選器（client component）
     StockChart.tsx        K 線圖（client component）
   lib/

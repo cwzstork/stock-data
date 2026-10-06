@@ -241,6 +241,10 @@ export default function StockChart({
       chartRef.current = null;
       seriesRef.current = {};
     };
+    // on 刻意不列進相依：它只決定線條的顯示與否，由下面那個 effect 用
+    // applyOptions 處理就好。列進來會讓每次切換線條都重建整張圖，
+    // 使用者拉好的縮放與平移位置會被清掉。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points, byTime, pane]);
 
   // 切換線條只改 visible，不重建整張圖——重建會把使用者拉好的縮放位置清掉
