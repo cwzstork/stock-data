@@ -80,6 +80,10 @@ export interface Filters {
   roeAvg3Min: number | null;
   roeAvg5Min: number | null;
   roeAvg10Min: number | null;
+  /** 近 N 年最低 ROE 的下限(%)，等同「ROE 連續 N 年 ≥ 這個值」 */
+  roeMin3Min: number | null;
+  roeMin5Min: number | null;
+  roeMin10Min: number | null;
   /** 近四季自由現金流下限，單位：百萬元 */
   fcfMin: number | null;
   /** 盈餘含金量下限(%)：近四季營業現金流 ÷ 稅後淨利 */
@@ -209,6 +213,9 @@ const RATIO = {
   roe_avg3: 'CASE WHEN af.roe3_n >= 3 THEN af.roe3 END',
   roe_avg5: 'CASE WHEN af.roe5_n >= 5 THEN af.roe5 END',
   roe_avg10: 'CASE WHEN af.roe10_n >= 10 THEN af.roe10 END',
+  roe_min3: 'CASE WHEN af.roe3_n >= 3 THEN af.roe_min3 END',
+  roe_min5: 'CASE WHEN af.roe5_n >= 5 THEN af.roe_min5 END',
+  roe_min10: 'CASE WHEN af.roe10_n >= 10 THEN af.roe_min10 END',
   // ── 現金流量（近四季）──
   // 自由現金流＝營業活動現金流 ＋ 資本支出（資本支出本來就是負值）
   fcf_ttm: `CASE WHEN ttm.cf_quarters = 4
@@ -281,6 +288,9 @@ const SORT_COLUMNS = {
   roe_avg3: RATIO.roe_avg3,
   roe_avg5: RATIO.roe_avg5,
   roe_avg10: RATIO.roe_avg10,
+  roe_min3: RATIO.roe_min3,
+  roe_min5: RATIO.roe_min5,
+  roe_min10: RATIO.roe_min10,
   cf_op_ttm: RATIO.cf_op_ttm,
   fcf_ttm: RATIO.fcf_ttm,
   capex_ttm: 'ttm.capex',
@@ -364,6 +374,9 @@ export function parseFilters(params: RawParams): Filters {
     roeAvg3Min: toNumber(toStr(params.roeAvg3Min)),
     roeAvg5Min: toNumber(toStr(params.roeAvg5Min)),
     roeAvg10Min: toNumber(toStr(params.roeAvg10Min)),
+    roeMin3Min: toNumber(toStr(params.roeMin3Min)),
+    roeMin5Min: toNumber(toStr(params.roeMin5Min)),
+    roeMin10Min: toNumber(toStr(params.roeMin10Min)),
     fcfMin: toNumber(toStr(params.fcfMin)),
     cfNiMin: toNumber(toStr(params.cfNiMin)),
     sort,
@@ -448,6 +461,10 @@ export interface ScreenerRow {
   roe_avg3: string | null;
   roe_avg5: string | null;
   roe_avg10: string | null;
+  /** 近 N 年最低 ROE。≥ 門檻就代表這 N 年每年都達標 */
+  roe_min3: string | null;
+  roe_min5: string | null;
+  roe_min10: string | null;
   // ── 現金流量（近四季，單位：元，畫面上再換算百萬）──
   cf_op_ttm: string | null;
   fcf_ttm: string | null;
@@ -662,6 +679,12 @@ const EPS_GROWTH_LATERAL = `
  *
  * rn 是年份由新到舊的名次，所以 rn <= 5 就是最近 5 個完整年度。
  * 不足 N 年的公司該欄留 null（不會拿 3 年的平均去充當 10 年）。
+ *
+ * 除了平均，也一併取「最低」。這是為了表達「連續 N 年都達標」——
+ * 「ROE 連續 5 年 ≥ 15%」就是「近 5 年最低 ROE ≥ 15%」，兩者完全等價。
+ * 用最低值而不是另外做一個 streak 欄位，好處是門檻由使用者填，
+ * 不用把 15% 寫死；而且平均與最低放在一起看，
+ * 立刻看得出一家公司是「穩定」還是「被某一年的高峰拉上去」。
  */
 const ANNUAL_FIN_LATERAL = `
   LEFT JOIN LATERAL (
@@ -674,6 +697,12 @@ const ANNUAL_FIN_LATERAL = `
            avg(roe)          FILTER (WHERE rn <= 3) AS roe3,
            avg(roe)          FILTER (WHERE rn <= 5) AS roe5,
            avg(roe)          FILTER (WHERE rn <= 10) AS roe10,
+           -- 最低值用來表達「連續 N 年都達標」：
+           -- 「ROE 連續 5 年 ≥ 15%」等價於「近 5 年最低 ROE ≥ 15%」。
+           -- 這樣門檻可以由使用者填，不必把 15% 寫死在欄位裡。
+           min(roe)          FILTER (WHERE rn <= 3) AS roe_min3,
+           min(roe)          FILTER (WHERE rn <= 5) AS roe_min5,
+           min(roe)          FILTER (WHERE rn <= 10) AS roe_min10,
            count(roe) FILTER (WHERE rn <= 3)::int   AS roe3_n,
            count(roe) FILTER (WHERE rn <= 5)::int   AS roe5_n,
            count(roe) FILTER (WHERE rn <= 10)::int  AS roe10_n
@@ -825,6 +854,10 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.roeAvg3Min !== null) add(`(${RATIO.roe_avg3}) >= ?`, f.roeAvg3Min);
   if (f.roeAvg5Min !== null) add(`(${RATIO.roe_avg5}) >= ?`, f.roeAvg5Min);
   if (f.roeAvg10Min !== null) add(`(${RATIO.roe_avg10}) >= ?`, f.roeAvg10Min);
+  // 「最低 ROE ≥ X」就是「連續 N 年每年都 ≥ X」
+  if (f.roeMin3Min !== null) add(`(${RATIO.roe_min3}) >= ?`, f.roeMin3Min);
+  if (f.roeMin5Min !== null) add(`(${RATIO.roe_min5}) >= ?`, f.roeMin5Min);
+  if (f.roeMin10Min !== null) add(`(${RATIO.roe_min10}) >= ?`, f.roeMin10Min);
   // 畫面上的單位是百萬元，資料庫存的是元
   if (f.fcfMin !== null) add(`(${RATIO.fcf_ttm}) >= ?`, Math.round(f.fcfMin * 1e6));
   if (f.cfNiMin !== null) add(`(${RATIO.cf_to_ni}) >= ?`, f.cfNiMin);
@@ -1040,6 +1073,9 @@ const SELECT_COLS = `
   round((${RATIO.roe_avg3})::numeric, 2)::text       AS roe_avg3,
   round((${RATIO.roe_avg5})::numeric, 2)::text       AS roe_avg5,
   round((${RATIO.roe_avg10})::numeric, 2)::text      AS roe_avg10,
+  round((${RATIO.roe_min3})::numeric, 2)::text       AS roe_min3,
+  round((${RATIO.roe_min5})::numeric, 2)::text       AS roe_min5,
+  round((${RATIO.roe_min10})::numeric, 2)::text      AS roe_min10,
   (${RATIO.cf_op_ttm})::text                         AS cf_op_ttm,
   (${RATIO.fcf_ttm})::text                           AS fcf_ttm,
   (CASE WHEN ttm.cf_quarters = 4 THEN ttm.capex END)::text AS capex_ttm,

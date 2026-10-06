@@ -196,6 +196,9 @@ function buildColumns(p: {
   { key: 'roe_avg3', label: 'ROE(近3年平均)%', right: true },
   { key: 'roe_avg5', label: 'ROE(近5年平均)%', right: true },
   { key: 'roe_avg10', label: 'ROE(近10年平均)%', right: true },
+  { key: 'roe_min3', label: 'ROE(近3年最低)%', right: true },
+  { key: 'roe_min5', label: 'ROE(近5年最低)%', right: true },
+  { key: 'roe_min10', label: 'ROE(近10年最低)%', right: true },
 
   { key: 'cf_op_ttm', label: '營業現金流(近四季12個月,百萬)', right: true },
   { key: 'capex_ttm', label: '資本支出(近四季12個月,百萬)', right: true },
@@ -287,6 +290,9 @@ function Row({ r }: { r: ScreenerRow }) {
       {nb(r.roe_avg3)}
       {nb(r.roe_avg5)}
       {n(r.roe_avg10)}
+      {n(r.roe_min3)}
+      {nb(r.roe_min5)}
+      {n(r.roe_min10)}
 
       <td className="px-2 py-1 text-right tabular-nums">{scaled(r.cf_op_ttm, 1e6)}</td>
       <td className="px-2 py-1 text-right tabular-nums">{scaled(r.capex_ttm, 1e6)}</td>
@@ -536,6 +542,21 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <Field label="ROE 10年平均下限 (%)">
             <input type="number" step="any" name="roeAvg10Min" defaultValue={f.roeAvg10Min ?? ''}
               placeholder="例：12" className={inputCls} />
+          </Field>
+
+          <Field label="ROE 3年最低下限 (%)">
+            <input type="number" step="any" name="roeMin3Min" defaultValue={f.roeMin3Min ?? ''}
+              placeholder="例：15" className={inputCls} />
+          </Field>
+
+          <Field label="ROE 5年最低下限 (%)">
+            <input type="number" step="any" name="roeMin5Min" defaultValue={f.roeMin5Min ?? ''}
+              placeholder="連5年≥15 就填 15" className={inputCls} />
+          </Field>
+
+          <Field label="ROE 10年最低下限 (%)">
+            <input type="number" step="any" name="roeMin10Min" defaultValue={f.roeMin10Min ?? ''}
+              placeholder="例：10" className={inputCls} />
           </Field>
 
           <Field label="自由現金流下限 (百萬)">
