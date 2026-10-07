@@ -23,6 +23,7 @@ const HEADERS = [
   '毛利率(年)%', '營業利益率(年)%', '稅後淨利率(年)%', 'ROE(年)%',
   'ROE(近3年平均)%', 'ROE(近5年平均)%', 'ROE(近10年平均)%',
   'ROE(近3年最低)%', 'ROE(近5年最低)%', 'ROE(近10年最低)%',
+  'MA5(日)', 'MA10(日)', 'MA20(日)', '均線離散度%', '均線排列',
   '營業現金流(近四季,百萬)', '資本支出(近四季,百萬)', '自由現金流(近四季,百萬)',
   '盈餘含金量(近四季)%',
   '月營收年增%', '營收年增(累計)%', '預估EPS(自算)', '保守預估EPS(自算)',
@@ -105,6 +106,15 @@ export async function GET(req: NextRequest) {
         cell(r.roe_min3),
         cell(r.roe_min5),
         cell(r.roe_min10),
+        cell(r.ma5),
+        cell(r.ma10),
+        cell(r.ma20),
+        cell(r.ma_spread),
+        cell(
+          r.ma_align === 'bull' ? '多頭排列'
+            : r.ma_align === 'bear' ? '空頭排列'
+              : r.ma_align === 'mixed' ? '交錯' : '',
+        ),
         cell(divide(r.cf_op_ttm, 1e6)),
         cell(divide(r.capex_ttm, 1e6)),
         cell(divide(r.fcf_ttm, 1e6)),

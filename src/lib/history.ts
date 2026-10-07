@@ -48,6 +48,13 @@ export interface ChartPoint extends Bar {
   ma20: number | null;
   /** 季線。不在預設顯示，但留著給想看長期趨勢的人 */
   ma60: number | null;
+  /**
+   * 均線離散度(%)＝(三條均線的最大值 − 最小值) ÷ MA20 × 100。
+   * 數字越小代表三線越靠在一起，也就是「糾結」。
+   */
+  maSpread: number | null;
+  /** 均線排列：多頭（5>10>20）／空頭（5<10<20）／交錯（兩者都不是） */
+  maAlign: 'bull' | 'bear' | 'mixed' | null;
   /** 布林通道：中軌（＝ma20）、上軌、下軌 */
   bbUpper: number | null;
   bbLower: number | null;
@@ -99,6 +106,15 @@ export interface InstDay {
 /** 一檔快取多久。看線圖通常會連續切換期間，不該每次都重打 */
 const TTL_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; bars: Bar[] }>();
+
+/**
+ * 均線「糾結」的門檻(%)。
+ *
+ * 三條均線的離散度低於這個數就算糾結——多空雙方在這個價位達成短暫共識，
+ * 往往是變盤前的盤整。2% 是台股常見的設定；數字太大會把一般盤整也算進去，
+ * 太小則幾乎篩不到東西。
+ */
+export const MA_CONVERGE_PCT = 2;
 
 /** 布林通道的參數。20 日 ± 2 倍標準差是最通用的設定 */
 const BB_PERIOD = 20;
@@ -419,6 +435,8 @@ export function withIndicators(
 
   return bars.map((b, i) => {
     const ma20 = sma(closes, i, BB_PERIOD);
+    const m5 = sma(closes, i, 5);
+    const m10 = sma(closes, i, 10);
     let bbUpper: number | null = null;
     let bbLower: number | null = null;
     if (ma20 !== null) {
@@ -429,10 +447,22 @@ export function withIndicators(
     return {
       ...b,
       vwap: b.volume > 0 ? b.turnover / b.volume : null,
-      ma5: sma(closes, i, 5),
-      ma10: sma(closes, i, 10),
+      ma5: m5,
+      ma10: m10,
       ma20,
       ma60: sma(closes, i, 60),
+      maSpread:
+        m5 !== null && m10 !== null && ma20 !== null && ma20 > 0
+          ? ((Math.max(m5, m10, ma20) - Math.min(m5, m10, ma20)) / ma20) * 100
+          : null,
+      maAlign:
+        m5 === null || m10 === null || ma20 === null
+          ? null
+          : m5 > m10 && m10 > ma20
+            ? 'bull'
+            : m5 < m10 && m10 < ma20
+              ? 'bear'
+              : 'mixed',
       bbUpper,
       bbLower,
       cost20: weightedCost(bars, i, 20),

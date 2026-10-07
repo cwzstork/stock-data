@@ -12,7 +12,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import Link from 'next/link';
-import type { ChartPoint } from '@/lib/history';
+import { MA_CONVERGE_PCT, type ChartPoint } from '@/lib/history';
 
 /**
  * K 線圖。
@@ -50,6 +50,7 @@ const PANES = {
   macd: { label: 'MACD(12,26,9)' },
   inst: { label: '法人買賣超' },
   chips: { label: '籌碼（外資持股／融資）' },
+  ma: { label: '均線離散度' },
 } as const;
 type PaneKey = keyof typeof PANES;
 
@@ -73,6 +74,28 @@ function labelOf(k: LineKey, unit: string): string {
   return base
     .replace(/^MA([0-9]+)/, (_m, d) => `MA${d}(${unit})`)
     .replaceAll("日", unit);
+}
+
+/**
+ * 均線排列的說法。
+ *
+ * 糾結優先於排列：三線都擠在一起時，「多頭排列」其實沒有意義——
+ * 差距小到隨便一天就會換序。所以先看離散度，夠開才談排列方向。
+ */
+function maStatus(p: ChartPoint | undefined) {
+  if (!p || p.maAlign === null || p.maSpread === null) return null;
+  const tight = p.maSpread < MA_CONVERGE_PCT;
+  if (tight) {
+    return {
+      text: p.maAlign === 'bull' ? '糾結（偏多）' : p.maAlign === 'bear' ? '糾結（偏空）' : '糾結',
+      cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300',
+    };
+  }
+  if (p.maAlign === 'bull')
+    return { text: '多頭排列', cls: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300' };
+  if (p.maAlign === 'bear')
+    return { text: '空頭排列', cls: 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' };
+  return { text: '交錯', cls: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' };
 }
 
 const ts = (d: string) => (Date.parse(d + 'T00:00:00Z') / 1000) as UTCTimestamp;
@@ -110,6 +133,7 @@ export default function StockChart({
   const shown = hover ?? points[points.length - 1];
   // 籌碼資料是伺服器視 ?pane=chips 才抓的，沒抓就不顯示相關讀數
   const hasChips = points.some((p) => p.foreignRatio !== null || p.marginBalance !== null);
+  const status = maStatus(shown);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -212,6 +236,35 @@ export default function StockChart({
               color: (p.osc as number) >= 0 ? 'rgba(220,38,38,.5)' : 'rgba(22,163,74,.5)',
             })),
         );
+      } else if (pane === 'ma') {
+        // 柱狀比線條好讀：一眼看出哪幾段擠在一起（低矮）、哪幾段發散（高）
+        const sp = chart.addSeries(HistogramSeries, { priceLineVisible: false }, P);
+        sp.setData(
+          points
+            .filter((p) => p.maSpread !== null)
+            .map((p) => ({
+              time: ts(p.date),
+              value: p.maSpread as number,
+              // 糾結塗黃，發散時依排列方向上紅下綠
+              color:
+                (p.maSpread as number) < MA_CONVERGE_PCT
+                  ? 'rgba(245,158,11,.75)'
+                  : p.maAlign === 'bull'
+                    ? 'rgba(220,38,38,.55)'
+                    : p.maAlign === 'bear'
+                      ? 'rgba(22,163,74,.55)'
+                      : 'rgba(148,163,184,.55)',
+            })),
+        );
+        // 糾結門檻畫一條參考線，才知道柱子要多低才算糾結
+        sp.createPriceLine({
+          price: MA_CONVERGE_PCT,
+          color: '#f59e0b',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: '糾結',
+        });
       } else if (pane === 'chips') {
         // 兩者刻度天差地遠（持股比率是 %，融資餘額是張），各用一個價格軸
         const fr = chart.addSeries(
@@ -297,6 +350,12 @@ export default function StockChart({
         </span>
         <span className="text-zinc-500">量 {lots(shown.volume)} 張</span>
         <span className="text-zinc-500">均價 {fmt(shown.vwap)}</span>
+        {status && (
+          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${status.cls}`}>
+            {status.text}
+            <span className="ml-1 font-normal">離散 {fmt(shown.maSpread)}%</span>
+          </span>
+        )}
       </div>
 
       {/* 游標那一天的震盪指標與法人動向 */}

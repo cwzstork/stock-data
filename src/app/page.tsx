@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { deleteFilter, listSavedFilters, saveFilter } from '@/lib/saved-filter';
 import {
   MARKET_LABEL,
+  MA_CONVERGE_PCT,
   PAGE_SIZES,
   getIndustries,
   getTradeDates,
@@ -205,6 +206,12 @@ function buildColumns(p: {
   { key: 'fcf_ttm', label: '自由現金流(近四季12個月,百萬)', right: true },
   { key: 'cf_to_ni', label: '盈餘含金量(近四季,營業現金流÷淨利)%', right: true },
 
+  { key: 'ma5', label: 'MA5(日)', right: true },
+  { key: 'ma10', label: 'MA10(日)', right: true },
+  { key: 'ma20', label: 'MA20(日)', right: true },
+  { key: 'ma_spread', label: '均線離散度%', right: true },
+  { key: null, label: '均線排列' },
+
   { key: 'rev_m_yoy', label: `月營收年增(${rm})%`, right: true },
   { key: 'rev_ytd_yoy', label: `營收年增(${estYear}累計)%`, right: true },
   { key: 'est_eps', label: `預估EPS(${estYear},自算)`, right: true },
@@ -232,6 +239,26 @@ function buildColumns(p: {
 
     { key: null, label: '財報期別' },
   ];
+}
+
+/**
+ * 均線排列的徽章。
+ *
+ * 糾結優先於排列方向：三線都擠在一起時，「多頭排列」沒什麼意義——
+ * 差距小到隨便一天就會換序。所以先看離散度，夠開才談方向。
+ */
+function maLabel(align: string | null, spread: string | null) {
+  if (!align) return <span className="text-zinc-300 dark:text-zinc-700">—</span>;
+  const tight = spread !== null && Number(spread) < MA_CONVERGE_PCT;
+  const [text, cls] = tight
+    ? [align === 'bull' ? '糾結(偏多)' : align === 'bear' ? '糾結(偏空)' : '糾結',
+       'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300']
+    : align === 'bull'
+      ? ['多頭排列', 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300']
+      : align === 'bear'
+        ? ['空頭排列', 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300']
+        : ['交錯', 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'];
+  return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{text}</span>;
 }
 
 function Row({ r }: { r: ScreenerRow }) {
@@ -307,6 +334,12 @@ function Row({ r }: { r: ScreenerRow }) {
       <td className="px-2 py-1 text-right tabular-nums">{scaled(r.capex_ttm, 1e6)}</td>
       <td className="px-2 py-1 text-right tabular-nums font-medium">{scaled(r.fcf_ttm, 1e6)}</td>
       {n(r.cf_to_ni)}
+
+      {n(r.ma5)}
+      {n(r.ma10)}
+      {nb(r.ma20)}
+      {n(r.ma_spread)}
+      <td className="px-2 py-1 whitespace-nowrap">{maLabel(r.ma_align, r.ma_spread)}</td>
 
       {n(r.rev_m_yoy)}
       {n(r.rev_ytd_yoy)}
@@ -551,6 +584,21 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
           <Field label="ROE 10年平均下限 (%)">
             <input type="number" step="any" name="roeAvg10Min" defaultValue={f.roeAvg10Min ?? ''}
               placeholder="例：12" className={inputCls} />
+          </Field>
+
+          <Field label="均線排列">
+            <select name="maAlign" defaultValue={f.maAlign ?? ''} className={inputCls}>
+              <option value="">不限</option>
+              <option value="bull">多頭排列（5&gt;10&gt;20）</option>
+              <option value="bear">空頭排列（5&lt;10&lt;20）</option>
+              <option value="converge">糾結（三線靠攏）</option>
+              <option value="bullConverge">多頭且糾結（突破前夕）</option>
+            </select>
+          </Field>
+
+          <Field label="均線離散度上限 (%)">
+            <input type="number" step="any" name="maSpreadMax" defaultValue={f.maSpreadMax ?? ''}
+              placeholder={`糾結預設 ${MA_CONVERGE_PCT}`} className={inputCls} />
           </Field>
 
           <Field label="ROE 3年最低下限 (%)">

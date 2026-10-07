@@ -80,6 +80,13 @@ export interface Filters {
   roeAvg3Min: number | null;
   roeAvg5Min: number | null;
   roeAvg10Min: number | null;
+  /**
+   * 均線排列。bull 多頭、bear 空頭、converge 糾結、bullConverge 多頭且糾結。
+   * 「多頭且糾結」是突破前夕的型態：方向偏多但還沒發散。
+   */
+  maAlign: 'bull' | 'bear' | 'converge' | 'bullConverge' | null;
+  /** 均線離散度上限(%)。自己調糾結的鬆緊 */
+  maSpreadMax: number | null;
   /** 近 N 年最低 ROE 的下限(%)，等同「ROE 連續 N 年 ≥ 這個值」 */
   roeMin3Min: number | null;
   roeMin5Min: number | null;
@@ -123,6 +130,12 @@ export const MARKET_LABEL: Record<string, string> = {
  *
  * 季報沒有的（ETF、興櫃）退回用 stock_capital。
  */
+/** 均線「糾結」的門檻(%)，跟線圖那邊用同一個定義 */
+export const MA_CONVERGE_PCT = 2;
+
+/** 均線可用的條件。不滿足就全部留空，不要給看起來正常但意義不同的數字 */
+const MA_OK = 'mv.n = 20 AND mv.span <= 40 AND mv.ma20 > 0';
+
 const CAPITAL_EXPR = 'COALESCE(q.capital_stock, cap.capital)';
 
 const RATIO = {
@@ -213,6 +226,18 @@ const RATIO = {
   roe_avg3: 'CASE WHEN af.roe3_n >= 3 THEN af.roe3 END',
   roe_avg5: 'CASE WHEN af.roe5_n >= 5 THEN af.roe5 END',
   roe_avg10: 'CASE WHEN af.roe10_n >= 10 THEN af.roe10 END',
+  // ── 均線（日線）──
+  ma5: `CASE WHEN ${MA_OK} THEN mv.ma5 END`,
+  ma10: `CASE WHEN ${MA_OK} THEN mv.ma10 END`,
+  ma20: `CASE WHEN ${MA_OK} THEN mv.ma20 END`,
+  /** 離散度＝(三線最大 − 最小) ÷ MA20 × 100。越小代表越糾結 */
+  ma_spread: `CASE WHEN ${MA_OK}
+                THEN (GREATEST(mv.ma5, mv.ma10, mv.ma20) - LEAST(mv.ma5, mv.ma10, mv.ma20))
+                     * 100.0 / mv.ma20 END`,
+  ma_align: `CASE WHEN NOT (${MA_OK}) THEN NULL
+                  WHEN mv.ma5 > mv.ma10 AND mv.ma10 > mv.ma20 THEN 'bull'
+                  WHEN mv.ma5 < mv.ma10 AND mv.ma10 < mv.ma20 THEN 'bear'
+                  ELSE 'mixed' END`,
   roe_min3: 'CASE WHEN af.roe3_n >= 3 THEN af.roe_min3 END',
   roe_min5: 'CASE WHEN af.roe5_n >= 5 THEN af.roe_min5 END',
   roe_min10: 'CASE WHEN af.roe10_n >= 10 THEN af.roe_min10 END',
@@ -288,6 +313,10 @@ const SORT_COLUMNS = {
   roe_avg3: RATIO.roe_avg3,
   roe_avg5: RATIO.roe_avg5,
   roe_avg10: RATIO.roe_avg10,
+  ma5: RATIO.ma5,
+  ma10: RATIO.ma10,
+  ma20: RATIO.ma20,
+  ma_spread: RATIO.ma_spread,
   roe_min3: RATIO.roe_min3,
   roe_min5: RATIO.roe_min5,
   roe_min10: RATIO.roe_min10,
@@ -374,6 +403,11 @@ export function parseFilters(params: RawParams): Filters {
     roeAvg3Min: toNumber(toStr(params.roeAvg3Min)),
     roeAvg5Min: toNumber(toStr(params.roeAvg5Min)),
     roeAvg10Min: toNumber(toStr(params.roeAvg10Min)),
+    maAlign: (() => {
+      const v = toStr(params.maAlign);
+      return v === 'bull' || v === 'bear' || v === 'converge' || v === 'bullConverge' ? v : null;
+    })(),
+    maSpreadMax: toNumber(toStr(params.maSpreadMax)),
     roeMin3Min: toNumber(toStr(params.roeMin3Min)),
     roeMin5Min: toNumber(toStr(params.roeMin5Min)),
     roeMin10Min: toNumber(toStr(params.roeMin10Min)),
@@ -461,6 +495,14 @@ export interface ScreenerRow {
   roe_avg3: string | null;
   roe_avg5: string | null;
   roe_avg10: string | null;
+  // ── 均線（日線）──
+  ma5: string | null;
+  ma10: string | null;
+  ma20: string | null;
+  /** 離散度 % */
+  ma_spread: string | null;
+  /** bull / bear / mixed */
+  ma_align: string | null;
   /** 近 N 年最低 ROE。≥ 門檻就代表這 N 年每年都達標 */
   roe_min3: string | null;
   roe_min5: string | null;
@@ -665,6 +707,36 @@ const EPS_GROWTH_LATERAL = `
   ) eg ON true`;
 
 /**
+ * 日線的 MA5 / MA10 / MA20。
+ *
+ * 這裡有個資料面的陷阱要擋：stock_daily 為了省容量只留
+ * 「每月最後交易日 120 期 ＋ 最近 61 個交易日」。
+ * 往前取 20 筆在最近的日期是連續交易日沒問題，但切到歷史基準日時
+ * 取到的會是「20 個月底」——算出來的「20 日均線」其實是 20 個月的均價，
+ * 數字看起來很正常，意義卻完全不同。
+ *
+ * 所以加一道連續性守門：20 筆要在 40 個日曆天內。
+ * 實測台積電：基準日 2026-10-02 橫跨 29 天（可算），
+ * 2025-06-30 橫跨 578 天、2018-01-24 橫跨 424 天（不可算，留空）。
+ */
+const MA_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT avg(close) FILTER (WHERE rn <= 5)  AS ma5,
+           avg(close) FILTER (WHERE rn <= 10) AS ma10,
+           avg(close) FILTER (WHERE rn <= 20) AS ma20,
+           count(*)::int                      AS n,
+           (max(trade_date) - min(trade_date))::int AS span
+      FROM (
+        SELECT close, trade_date,
+               row_number() OVER (ORDER BY trade_date DESC) AS rn
+          FROM stock_daily x
+         WHERE x.stock_id = d.stock_id AND x.trade_date <= d.trade_date AND x.close > 0
+         ORDER BY trade_date DESC
+         LIMIT 20
+      ) t
+  ) mv ON true`;
+
+/**
  * 年度財報值與 ROE 多年平均。
  *
  * 年度值＝該年四季加總（跟 EPS 連續成長同一個原則），只採四季齊全的年度——
@@ -854,6 +926,21 @@ function buildWhere(f: Filters, tradeDate: string): Where {
   if (f.roeAvg3Min !== null) add(`(${RATIO.roe_avg3}) >= ?`, f.roeAvg3Min);
   if (f.roeAvg5Min !== null) add(`(${RATIO.roe_avg5}) >= ?`, f.roeAvg5Min);
   if (f.roeAvg10Min !== null) add(`(${RATIO.roe_avg10}) >= ?`, f.roeAvg10Min);
+  // 均線排列。糾結的門檻可以自己填，沒填就用預設的 2%
+  if (f.maAlign !== null) {
+    const tight = `(${RATIO.ma_spread}) < ${f.maSpreadMax ?? MA_CONVERGE_PCT}`;
+    if (f.maAlign === 'bull') add(`(${RATIO.ma_align}) = ?`, 'bull');
+    else if (f.maAlign === 'bear') add(`(${RATIO.ma_align}) = ?`, 'bear');
+    else if (f.maAlign === 'converge') parts.push(tight);
+    else {
+      add(`(${RATIO.ma_align}) = ?`, 'bull');
+      parts.push(tight);
+    }
+  } else if (f.maSpreadMax !== null) {
+    // 只填離散度沒選排列時，當成純粹的「糾結」條件
+    add(`(${RATIO.ma_spread}) <= ?`, f.maSpreadMax);
+  }
+
   // 「最低 ROE ≥ X」就是「連續 N 年每年都 ≥ X」
   if (f.roeMin3Min !== null) add(`(${RATIO.roe_min3}) >= ?`, f.roeMin3Min);
   if (f.roeMin5Min !== null) add(`(${RATIO.roe_min5}) >= ?`, f.roeMin5Min);
@@ -1073,6 +1160,11 @@ const SELECT_COLS = `
   round((${RATIO.roe_avg3})::numeric, 2)::text       AS roe_avg3,
   round((${RATIO.roe_avg5})::numeric, 2)::text       AS roe_avg5,
   round((${RATIO.roe_avg10})::numeric, 2)::text      AS roe_avg10,
+  round((${RATIO.ma5})::numeric, 2)::text            AS ma5,
+  round((${RATIO.ma10})::numeric, 2)::text           AS ma10,
+  round((${RATIO.ma20})::numeric, 2)::text           AS ma20,
+  round((${RATIO.ma_spread})::numeric, 2)::text      AS ma_spread,
+  (${RATIO.ma_align})                                AS ma_align,
   round((${RATIO.roe_min3})::numeric, 2)::text       AS roe_min3,
   round((${RATIO.roe_min5})::numeric, 2)::text       AS roe_min5,
   round((${RATIO.roe_min10})::numeric, 2)::text      AS roe_min10,
@@ -1095,7 +1187,8 @@ const FROM_CLAUSE = `
     ${INSIDER_LATERAL}
     ${REVENUE_LATERAL}
     ${EPS_GROWTH_LATERAL}
-    ${ANNUAL_FIN_LATERAL}`;
+    ${ANNUAL_FIN_LATERAL}
+    ${MA_LATERAL}`;
 
 function baseQuery(where: Where, f: Filters) {
   return `${FROM_CLAUSE}
