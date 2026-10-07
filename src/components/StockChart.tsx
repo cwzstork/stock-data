@@ -421,7 +421,7 @@ export default function StockChart({
       <div className="mb-2 flex flex-wrap items-center gap-1 text-xs">
         <span className="mr-1 text-zinc-500">副圖</span>
         {(Object.keys(PANES) as PaneKey[]).map((p) => {
-          const cls = `rounded px-2 py-0.5 transition ${
+          const cls = `rounded px-2.5 py-1.5 transition sm:py-0.5 ${
             p === pane
               ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
               : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300'
@@ -442,10 +442,18 @@ export default function StockChart({
         })}
       </div>
 
-      <div ref={boxRef} className={pane === 'none' ? 'h-[460px] w-full' : 'h-[600px] w-full'} />
+      {/* 手機螢幕矮，460/600 會把整頁塞滿，捲都捲不動 */}
+      <div
+        ref={boxRef}
+        className={
+          pane === 'none' ? 'h-[300px] w-full sm:h-[460px]' : 'h-[400px] w-full sm:h-[600px]'
+        }
+      />
 
       <p className="mt-2 text-xs text-zinc-500">
-        滑鼠移動看各日數字　·　拖曳平移　·　滾輪縮放　·　點上方圖例可開關線條
+        <span className="hidden sm:inline">滑鼠移動看各日數字　·　拖曳平移　·　滾輪縮放</span>
+        <span className="sm:hidden">按住拖曳看各日數字　·　雙指縮放</span>
+        　·　點上方圖例可開關線條
       </p>
     </div>
   );

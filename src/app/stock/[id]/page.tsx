@@ -87,7 +87,7 @@ export default async function StockPage({
     `/stock/${id}?range=${range}${t === 'day' ? '' : `&tf=${t}`}${wantChips ? '&pane=chips' : ''}`;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
+    <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
       <h1 className="flex flex-wrap items-baseline gap-x-3">
         <span className="font-mono text-2xl text-zinc-500">{stock.stock_id}</span>
         <span className="text-2xl font-bold">{stock.stock_name}</span>
@@ -116,7 +116,7 @@ export default async function StockPage({
           <Link
             key={t}
             href={keepTf(t)}
-            className={`rounded px-3 py-1 text-sm font-medium transition ${
+            className={`rounded px-4 py-2 text-sm font-medium transition sm:px-3 sm:py-1 ${
               t === tf
                 ? 'bg-sky-600 text-white'
                 : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
@@ -133,7 +133,7 @@ export default async function StockPage({
           <Link
             key={r}
             href={keep(r)}
-            className={`rounded px-3 py-1 text-sm transition ${
+            className={`rounded px-4 py-2 text-sm transition sm:px-3 sm:py-1 ${
               r === range
                 ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
                 : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
@@ -182,7 +182,7 @@ export default async function StockPage({
       )}
 
       {last && (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Card title={`布林通道（20${TIMEFRAMES[tf].unit},2倍標準差）`}>
             <Line k="上軌" v={fmt(last.bbUpper)} />
             <Line k="中軌（MA20）" v={fmt(last.ma20)} />

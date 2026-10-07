@@ -261,6 +261,24 @@ function maLabel(align: string | null, spread: string | null) {
   return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{text}</span>;
 }
 
+/**
+ * 橫向捲動時「釘住」的前兩欄（股號、股名）。
+ *
+ * 73 欄的表格在手機上一定要橫捲，捲到中間如果沒有錨點，
+ * 就不知道自己在看哪一檔——數字全部失去意義。
+ *
+ * 釘住的儲存格要自己帶背景色，不然底下的內容會從它下面透出來。
+ * 滑過整列時背景會變，所以用 group-hover 讓釘住的那兩格跟著變，
+ * 否則整列變色只有這兩格沒變，看起來像壞掉。
+ */
+const STICK1 =
+  'sticky left-0 z-10 bg-white group-hover:bg-amber-50/60 dark:bg-zinc-950 dark:group-hover:bg-zinc-800/60';
+const STICK2 =
+  'sticky left-[4.5rem] z-10 bg-white group-hover:bg-amber-50/60 dark:bg-zinc-950 dark:group-hover:bg-zinc-800/60';
+/** 表頭的那兩格也要釘，而且要比內容高一層 */
+const STICK1_TH = 'sticky left-0 z-20 bg-zinc-50 dark:bg-zinc-900';
+const STICK2_TH = 'sticky left-[4.5rem] z-20 bg-zinc-50 dark:bg-zinc-900';
+
 function Row({ r }: { r: ScreenerRow }) {
   const n = (v: string | null, d = 2) => (
     <td className="px-2 py-1 text-right tabular-nums">{fmt(v, d)}</td>
@@ -269,14 +287,14 @@ function Row({ r }: { r: ScreenerRow }) {
     <td className="px-2 py-1 text-right tabular-nums font-medium">{fmt(v, d)}</td>
   );
   return (
-    <tr className="border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60">
-      {/* 點股號或股名進個股線圖 */}
-      <td className="px-2 py-1 font-mono">
+    <tr className="group border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60">
+      {/* 點股號或股名進個股線圖。這兩欄橫捲時會釘在左邊當錨點 */}
+      <td className={`w-[4.5rem] px-2 py-1.5 font-mono ${STICK1}`}>
         <Link href={`/stock/${r.stock_id}`} className="text-sky-700 hover:underline dark:text-sky-400">
           {r.stock_id}
         </Link>
       </td>
-      <td className="px-2 py-1 whitespace-nowrap">
+      <td className={`px-2 py-1.5 whitespace-nowrap ${STICK2}`}>
         <Link href={`/stock/${r.stock_id}`} className="text-sky-700 hover:underline dark:text-sky-400">
           {r.stock_name}
         </Link>
@@ -420,8 +438,16 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
   // 目前畫面上的條件，原樣拿來存或分享
   const currentQuery = withParams(params, []);
 
+  // 手機上條件區是收起來的，所以要在標題標出「已經設了幾個條件」，
+  // 否則收起來之後完全看不出自己篩了什麼。
+  // 排序、分頁、基準日不算條件——它們永遠有值，算進去就失去意義了。
+  const NOT_A_FILTER = new Set(['page', 'size', 'sort', 'dir', 'date']);
+  const activeCount = Object.entries(params).filter(
+    ([k, v]) => !NOT_A_FILTER.has(k) && String(v ?? '').trim() !== '',
+  ).length;
+
   return (
-    <div className="mx-auto w-full max-w-[1600px] px-4 py-6">
+    <div className="mx-auto w-full max-w-[1600px] px-3 py-4 sm:px-4 sm:py-6">
       <header className="mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-semibold">台股篩選器</h1>
@@ -492,7 +518,29 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
       </section>
 
       <form method="get" className="mb-5 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {/*
+          手機上三十幾個欄位會把結果推到十個螢幕以外，所以預設收起來。
+          用 checkbox + peer 做純 CSS 的展開，不用 client component——
+          也就沒有「伺服器算一套、瀏覽器算另一套」的水合不一致問題。
+          lg 以上一律展開（lg:grid），切換鈕也只在手機顯示（lg:hidden）。
+        */}
+        <input type="checkbox" id="filters-open" className="peer sr-only" />
+        <label
+          htmlFor="filters-open"
+          className="mb-2 flex cursor-pointer items-center justify-between rounded bg-zinc-100 px-3 py-2.5 text-sm font-medium select-none peer-checked:[&_.chev]:rotate-180 lg:hidden dark:bg-zinc-800"
+        >
+          <span>
+            篩選條件
+            {activeCount > 0 && (
+              <span className="ml-2 rounded-full bg-zinc-900 px-2 py-0.5 text-xs text-white dark:bg-zinc-100 dark:text-zinc-900">
+                {activeCount}
+              </span>
+            )}
+          </span>
+          <span className="chev text-xs text-zinc-500 transition-transform">▾</span>
+        </label>
+
+        <div className="hidden grid-cols-2 gap-3 peer-checked:grid sm:grid-cols-3 lg:grid lg:grid-cols-6">
           <Field label="基準日">
             <select name="date" defaultValue={result?.tradeDate ?? ''} className={inputCls}>
               {dates.map((d) => (
@@ -718,23 +766,24 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
         <input type="hidden" name="sort" value={f.sort} />
         <input type="hidden" name="dir" value={f.dir} />
 
-        <div className="mt-3 flex items-center gap-2">
+        {/* 觸控目標至少 40px 高，手機上按得到 */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="submit"
-            className="rounded bg-zinc-900 px-4 py-1.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900"
+            className="rounded bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white active:scale-[.98] sm:py-1.5 dark:bg-zinc-100 dark:text-zinc-900"
           >
             篩選
           </button>
           <Link
             href="/"
-            className="rounded border border-zinc-300 px-4 py-1.5 text-sm dark:border-zinc-700"
+            className="rounded border border-zinc-300 px-5 py-2.5 text-sm sm:py-1.5 dark:border-zinc-700"
           >
             清除
           </Link>
           {result && result.total > 0 && (
             <a
               href={`/api/export?${withParams(params, ['page', 'size'])}`}
-              className="rounded border border-zinc-300 px-4 py-1.5 text-sm dark:border-zinc-700"
+              className="rounded border border-zinc-300 px-5 py-2.5 text-sm sm:py-1.5 dark:border-zinc-700"
             >
               下載 CSV
             </a>
@@ -787,10 +836,12 @@ export default async function Home({ searchParams }: PageProps<'/'>) {
             <table className="w-full min-w-[5800px] text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
-                  {COLUMNS.map((c) => (
+                  {COLUMNS.map((c, i) => (
                     <th
                       key={c.label}
-                      className={`px-2 py-2 font-medium ${c.right ? 'text-right' : 'text-left'}`}
+                      className={`px-2 py-2 font-medium ${c.right ? 'text-right' : 'text-left'} ${
+                        i === 0 ? STICK1_TH : i === 1 ? STICK2_TH : ''
+                      }`}
                     >
                       {c.key ? (
                         <Link href={sortHref(params, f, c.key)} className="hover:underline">

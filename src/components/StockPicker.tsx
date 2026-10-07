@@ -134,7 +134,11 @@ export default function StockPicker({ name, initial, max }: Props) {
     <div ref={boxRef} className="relative">
       <input type="hidden" name={name} value={picked.map((p) => p.stock_id).join(',')} />
 
-      <div className="flex flex-wrap items-center gap-1 rounded border border-zinc-300 bg-white p-1.5 dark:border-zinc-700 dark:bg-zinc-900">
+      {/*
+        手機上預設 50 檔權值股會產生 50 個 chip，佔掉整個螢幕高度，
+        報價表會被推到看不見的地方。限高可捲，桌機不限。
+      */}
+      <div className="flex max-h-44 flex-wrap items-center gap-1 overflow-y-auto rounded border border-zinc-300 bg-white p-1.5 sm:max-h-none sm:overflow-visible dark:border-zinc-700 dark:bg-zinc-900">
         {picked.map((p) => (
           <span
             key={p.stock_id}

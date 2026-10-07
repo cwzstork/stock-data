@@ -159,7 +159,7 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
   const asOfDate = quotes.find((q) => q.date)?.date ?? '';
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6">
+    <div className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-6">
       <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold">即時報價</h1>
@@ -236,16 +236,16 @@ export default async function LivePage({ searchParams }: PageProps<'/live'>) {
                 {quotes.map((q) => (
                   <tr
                     key={q.stockId}
-                    className="border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60"
+                    className="group border-b border-zinc-100 hover:bg-amber-50/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60"
                   >
-                    {/* 點股號或股名進個股線圖 */}
-                    <td className="px-2 py-1 font-mono">
+                    {/* 點股號或股名進個股線圖。這兩欄橫捲時釘在左邊當錨點 */}
+                    <td className="sticky left-0 z-10 w-[4.5rem] bg-white px-2 py-2 font-mono group-hover:bg-amber-50/60 dark:bg-zinc-950 dark:group-hover:bg-zinc-800/60">
                       <Link href={`/stock/${q.stockId}`} className="text-sky-700 hover:underline dark:text-sky-400">
                         {q.stockId}
                       </Link>
                     </td>
                     {/* MIS 回傳的名稱偶爾是簡稱或空白，主檔的比較一致 */}
-                    <td className="px-2 py-1 whitespace-nowrap">
+                    <td className="sticky left-[4.5rem] z-10 bg-white px-2 py-2 whitespace-nowrap group-hover:bg-amber-50/60 dark:bg-zinc-950 dark:group-hover:bg-zinc-800/60">
                       <Link href={`/stock/${q.stockId}`} className="text-sky-700 hover:underline dark:text-sky-400">
                         {nameOf.get(q.stockId) ?? q.name}
                       </Link>
