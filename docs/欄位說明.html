@@ -83,14 +83,14 @@
 
 <h1>台股篩選器 — 欄位說明</h1>
 <p class="lede">
-  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-10-06</strong>。<br>
+  每個欄位的時間基準、涵蓋區間與對位規則。資料截至 <strong>2026-10-07</strong>。<br>
   畫面上的欄位名都會標出時間基準——同一個指標在不同基準下差很多，
   台積電 <strong>ROE(近四季) 34.78%</strong> 與 <strong>ROE(累計年化) 39.77%</strong> 是同一天的兩個數字。
 </p>
 
 <div class="grid">
-  <div class="card"><b>143 MB</b><span>資料庫已用 / 512 MB</span>
-    <div class="bar"><i style="width:28%"></i></div></div>
+  <div class="card"><b>150 MB</b><span>資料庫已用 / 512 MB</span>
+    <div class="bar"><i style="width:29%"></i></div></div>
   <div class="card"><b>3,083 / 3,083</b><span>配息回補　<strong style="color:#15803d">完成</strong></span>
     <div class="bar"><i style="width:100%"></i></div></div>
   <div class="card"><b>3,083 / 3,083</b><span>年度彙總回補　<strong style="color:#15803d">完成</strong></span>
@@ -99,13 +99,15 @@
     <div class="bar"><i style="width:100%"></i></div></div>
   <div class="card"><b>3,083 / 3,083</b><span>十年月營收回補　<strong style="color:#15803d">完成</strong></span>
     <div class="bar"><i style="width:100%"></i></div></div>
-  <div class="card"><b>3,083 / 3,083</b><span>日頻 Parquet 外存　<strong style="color:#15803d">完成</strong></span>
+  <div class="card"><b>3,084 / 3,084</b><span>日頻 Parquet 外存　<strong style="color:#15803d">完成</strong></span>
+    <div class="bar"><i style="width:100%"></i></div></div>
+  <div class="card"><b>3,084 / 3,084</b><span>現金流量回補　<strong style="color:#15803d">完成</strong></span>
     <div class="bar"><i style="width:100%"></i></div></div>
 </div>
 
 <div class="box ok">
-<p><strong>歷史回補已於 2026-10-05 全部完成。</strong>五個資料集各 3,083 / 3,083，
-全程 23 輪 GitHub Actions，最後 15 輪連續綠燈。</p>
+<p><strong>所有歷史回補已於 2026-10-07 全部完成。</strong>六個資料集各 3,084 / 3,084。
+之後每 6 小時那一輪會在幾秒內收工（實測 0.1 分），只有主檔新增股票時才會真的去抓。</p>
 <div class="scroll"><table>
 <tr><th>資料集</th><th class="num">進度</th><th class="num">有資料</th><th class="num">無資料</th></tr>
 <tr><td>配息</td><td class="num">3,083 / 3,083</td><td class="num">2,351</td><td class="num">732</td></tr>
@@ -486,10 +488,12 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   之後寫入的會完全正確。</p>
 </div>
 <div>
-  <h4>1. 現金流量回補（3 / 3,083，約 5.5 小時）</h4>
-  <small>程式已完成並驗證，<strong>已排進佇列自動執行</strong>，每檔 1 次呼叫、實測 46 期。</small>
-  <p>欄位與查詢都已上線（營業現金流、資本支出、自由現金流、盈餘含金量，
-  以及自由現金流與含金量的篩選條件），等資料補齊就會有值。</p>
+  <h4>現金流量回補（3,084 / 3,084）</h4>
+  <small>2026-10-07 完成。2,444 檔有資料、86,731 列，涵蓋 2015Q1 ~ 2026Q2。</small>
+  <p>解掉：營業現金流、資本支出、自由現金流、盈餘含金量，
+  以及自由現金流與含金量的篩選條件。</p>
+  <p><strong>上游給的是累計不是單季</strong>（跟損益表相反），寫入前已相減轉成單季。
+  驗證：台積電 2025 單季 6,256＋4,971＋4,268＋7,255 ＝ 22,750 億，與 Q4 累計完全相同。</p>
   <p><strong>上游給的是累計不是單季</strong>（跟損益表相反），寫入前已相減轉成單季。
   驗證：台積電 2025 單季 6,256＋4,970＋4,269＋7,255 ＝ 22,750 億，與 Q4 累計完全相同。</p>
 </div>
@@ -521,11 +525,19 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
   跨輪執行用 <code>stock_id</code> 比對合併，重跑不會產生重複列（實測重複 0 筆）。</p>
 </div>
 <div>
-  <h4>2. 定期修剪 stock_daily</h4>
-  <small>見下一節。依修正後的估算大約 2.6 年後才會需要。</small>
+  <h4>1. 定期修剪 stock_daily（約 2.9 年後才需要）</h4>
+  <small>要按「密度」修剪，不是按「年齡」。</small>
+  <p>直覺會想「只留最近 N 年」，但那個規則<strong>一列都刪不到</strong>——
+  資料最早只到 2015-01-05，總共才 11.8 年。實測「只留 12 年內」會刪除 <strong>0 列</strong>。</p>
+  <p>成長的來源是<strong>每日同步每天寫入全部 2,754 檔</strong>：
+  2015~2025 每年只有 2k~33k 列（回補時只留月底的稀疏資料），
+  而 2026 一年就 196,393 列。</p>
+  <p>正確的規則是「<strong>超過 N 天的日期只留每月最後一個交易日</strong>」，
+  成長會從約 118 MB/年降到約 6 MB/年，等於停止成長。
+  被刪的資料完整留在 Parquet，一列都沒真的消失。</p>
 </div>
 <div>
-  <h4>3. 沒有免費來源，不會做</h4>
+  <h4>2. 沒有免費來源，不會做</h4>
   <ul>
     <li><strong>EPS（法人估）／最悲觀 EPS（法人估）</strong>——券商研究報告，沒有免費 API。
       實測 CMoney、鉅亨、Yahoo、玩股網的公開頁面都沒有這個欄位。
@@ -578,9 +590,14 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 
 <div class="todo">
 <div>
-  <h4>方案 A：定期修剪 stock_daily <span class="tag" style="border-color:#4ade80;color:#15803d">推薦</span></h4>
-  <p>保留「每月最後一個交易日 ＋ 最近 90 天」，中間逐日刪掉。每季跑一次，
-  容量<strong>穩定在 100 MB 左右不再成長</strong>（<code>stock_daily</code> 從 80 MB 降到約 30 MB）。
+  <h4>方案 A：按密度修剪 stock_daily <span class="tag" style="border-color:#4ade80;color:#15803d">推薦</span></h4>
+  <p><strong>要按「密度」修剪，不是按「年齡」。</strong>
+  直覺會想「只留最近 N 年」，但實測「只留 12 年內」會刪除 <strong>0 列</strong>——
+  資料最早只到 2015-01-05，總共才 11.8 年。</p>
+  <p>成長的來源是每日同步每天寫入全部 2,754 檔：
+  2015~2025 每年只有 2k~33k 列（回補時只留月底的稀疏資料），2026 一年就 196,393 列。</p>
+  <p>所以規則是「<strong>超過 90 天的日期只留每月最後一個交易日</strong>」，每季跑一次。
+  成長從約 118 MB/年降到約 <strong>6 MB/年</strong>（12 個月底 × 2,754 檔），等於停止成長。
   被刪的資料完整留在 Parquet。</p>
   <p><small>成本：一支排程 SQL。不損失任何篩選能力。</small></p>
 </div>
