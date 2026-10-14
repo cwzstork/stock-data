@@ -373,3 +373,38 @@ export async function fetchMonthlyRevenue(): Promise<MonthlyRevenue[]> {
   }
   return out;
 }
+
+// ── 休市行事曆 ───────────────────────────────────────────────────
+
+export interface MarketHoliday {
+  /** YYYY-MM-DD */
+  date: string;
+  name: string;
+  description: string;
+}
+
+/**
+ * 證交所公告的休市行事曆。
+ *
+ * 這份清單裡混了兩種紀錄，整份當成休市會算錯：
+ *   休市 —「依規定放假」「補假」「市場無交易，僅辦理結算交割作業」
+ *   開市 —「國曆新年開始交易日」「農曆春節前最後交易日」「農曆春節後開始交易日」
+ * 後者是「特別標註的交易日」，那幾天照樣要有行情，不能被當成休市漏掉。
+ *
+ * 只涵蓋當年度（民國年）。跨年時查不到去年十二月，
+ * 呼叫端要自己判斷涵蓋範圍，不要把「查不到」當成「有開市」。
+ */
+export async function fetchMarketHolidays(): Promise<MarketHoliday[]> {
+  type Row = { Name: string; Date: string; Weekday: string; Description: string };
+  const rows = await getJson<Row>(
+    '休市行事曆',
+    'https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule',
+  );
+  return rows
+    .filter((r) => !/開始交易|最後交易/.test(`${r.Name ?? ''}${r.Description ?? ''}`))
+    .map((r) => ({
+      date: rocToIso(r.Date),
+      name: String(r.Name ?? '').trim(),
+      description: String(r.Description ?? '').replace(/<br>/g, '').trim(),
+    }));
+}

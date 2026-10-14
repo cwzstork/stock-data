@@ -61,6 +61,7 @@ src/
 scripts/
   sync.ts                 每日同步
   backfill.ts             逐檔歷史回補（四個資料集）
+  check-gaps.ts           比對證交所行事曆，找出該有卻沒落地的交易日
 ```
 
 ## 資料來源
@@ -119,7 +120,15 @@ npm run backfill              乾跑
 npm run backfill -- --commit                      自動挑還沒補完的資料集
 npm run backfill -- --commit --dataset=quarterly  指定資料集
 npm run backfill -- --commit '--stocks=2330,0056' 指定股票
+
+npm run check-gaps            近 30 天該有的交易日有沒有缺，有缺就 exit 1
+npm run check-gaps -- --days 90   拉長視窗
+npm run check-gaps -- --warn      只印不失敗
 ```
+
+> `check-gaps` 的預設視窗是 30 天是有理由的：`stock_daily` 的稠密區從
+> 2026-06-30 起算，再往前是歷史回補的爬升期（每天只有個位數檔），
+> 視窗拉過 60 天會掃進那段而誤報。
 
 乾跑不是「只印不做」——它會真的執行 SQL、驗證型別與外鍵、回報實際落地的筆數，
 然後整筆回滾。

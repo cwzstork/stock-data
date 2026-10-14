@@ -2,17 +2,44 @@ name: 每日同步台股資料
 
 on:
   schedule:
-    # cron 是 UTC。10:00 UTC = 台北 18:00。
-    # 台股 13:30 收盤，交易所的日報表大約 15:00–16:00 才齊，留足緩衝。
-    # GitHub 的排程本來就會誤點十幾分鐘到半小時，這裡不需要精準。
-    - cron: '0 10 * * 1-5'
-    # 第二輪重試。上游偶爾會慢——2026-10-12 那天證交所還在給 10-08 的資料，
-    # 櫃買已經給 10-12，日期不一致會被守門擋下、那一輪什麼都不寫。
-    # 一天只跑一次的話，擋下來就等於整天的行情沒了。
-    # 多排一輪讓它自己補起來；同步是 upsert，第一輪成功時第二輪重跑也無害。
-    - cron: '0 20 * * 1-5'
+    # ── 為什麼排這麼多輪 ────────────────────────────────────────
+    #
+    # STOCK_DAY_ALL 不吃日期參數，只給「最新一個交易日」。
+    # 所以每個交易日 D 的行情只有一段固定的時間窗可以抓：
+    #
+    #   開始  D   08:00 UTC（台北 16:00）證交所日報表出齊
+    #   結束  D+1 07:00 UTC（台北 15:00）快照翻成 D+1，D 就再也抓不到
+    #
+    # 窗口 23 小時看起來很寬，但 GitHub 的排程誤點遠比文件說的嚴重：
+    # 實測 2026-10-01 ~ 10-13 這 9 次，'0 10' 這條每次都延遲 6 ~ 9.5 小時
+    # （16:07 / 16:32 / 16:50 / 16:54 / 17:13 / 17:18 / 17:23 / 19:05 / 19:39Z）。
+    # 整點是大家都在排的時間、排隊最久，所以改用奇數分鐘。
+    #
+    # 下面四個時間點，就算延遲 10 小時也都還落在窗口內：
+    #
+    #   10:17 UTC → 台北 18:17，最晚延到台北 D+1 04:17
+    #   14:17 UTC → 台北 22:17，最晚延到台北 D+1 08:17
+    #   18:17 UTC → 台北 D+1 02:17，最晚延到台北 D+1 12:17
+    #   22:17 UTC → 台北 D+1 06:17，最晚延到台北 D+1 16:17
+    #
+    # 第一輪刻意不排更早：台北 16:00 報表才出齊，太早跑會抓到前一天的快照，
+    # 而且上市上櫃會「一致地」給前一天，守門擋不住（它只比對兩邊是否同一天），
+    # 結果是把昨天原值覆寫一次、job 全綠、今天的行情就這樣沒了。
+    - cron: '17 10 * * 1-5'
+    - cron: '17 14 * * 1-5'
+    - cron: '17 18 * * 1-5'
+    - cron: '17 22 * * 1-5'
+    # 週六補一輪專門救星期五：週末沒有交易，快照會一直停在星期五，
+    # 整個週末都補得回來。沒有這輪的話，星期五那四輪全掛就要等到星期一，
+    # 而星期一下午快照就翻成星期一了。
+    - cron: '17 3 * * 6'
   # 讓你可以在 Actions 分頁手動按一下就跑
   workflow_dispatch:
+
+# 失敗時要開 issue，所以需要寫入權限；其餘維持唯讀
+permissions:
+  contents: read
+  issues: write
 
 # 同步是 upsert，重跑不會壞，但沒必要讓兩次同時寫
 concurrency:
@@ -51,6 +78,7 @@ jobs:
           check 'TWSE 上市日成交'   'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'
           check 'TWSE 上市本益比'   'https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL'
           check 'TWSE 上市基本資料' 'https://openapi.twse.com.tw/v1/opendata/t187ap03_L'
+          check 'TWSE 休市行事曆'   'https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule'
           check 'TPEx 上櫃日收盤'   'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes'
           check 'TPEx 上櫃本益比'   'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis'
           check 'TPEx 興櫃行情'     'https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics'
@@ -79,12 +107,75 @@ jobs:
           # 只導 stdout 的話失敗時 log 會停在最後一行正常輸出，完全看不到原因
           npm run sync -- --commit 2>&1 | tee sync.log
 
+      # 「同步失敗」會變紅燈，看得見；但「同步成功卻什麼有用的都沒寫」不會。
+      # 這支補的就是那個洞：直接拿證交所行事曆說該開市的日子，
+      # 去比對資料庫到底有沒有那一天。
+      # 用 always() 是因為同步失敗時更需要知道「到底掉了哪幾天」。
+      - name: 缺日偵測
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check-gaps 2>&1 | tee gaps.log
+
       - name: 把結果貼到執行摘要
         if: always()
         shell: bash
         run: |
           {
+            echo '### 同步'
             echo '```'
-            tail -n 80 sync.log 2>/dev/null || echo '(沒有產生 log，通常是安裝階段就失敗了)'
+            tail -n 60 sync.log 2>/dev/null || echo '(沒有產生 log，通常是安裝階段就失敗了)'
+            echo '```'
+            echo '### 缺日偵測'
+            echo '```'
+            tail -n 60 gaps.log 2>/dev/null || echo '(沒有產生 log)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # 執行摘要只有在瀏覽器裡看得到，job log 則要 repo admin 權限才下載得了。
+      # 存成 artifact 之後，不必翻 Actions 頁面也拿得到失敗當下的完整輸出。
+      - name: 失敗時留下 log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-log-${{ github.run_number }}
+          path: |
+            sync.log
+            gaps.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # Issue 的內容是公開可讀的（API 也讀得到），失敗原因不會再卡在
+      # 「只有 repo admin 下載得到 log」。同一天重複失敗接在同一張底下留言，不洗版。
+      - name: 失敗時開 issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          TITLE="同步失敗 $(TZ=Asia/Taipei date +%F)"
+          {
+            echo "觸發：\`${{ github.event_name }}\`　執行：$RUN_URL"
+            echo ""
+            echo "#### 同步"
+            echo '```'
+            tail -n 40 sync.log 2>/dev/null || echo '(沒有產生 sync.log)'
+            echo '```'
+            echo "#### 缺日偵測"
+            echo '```'
+            tail -n 40 gaps.log 2>/dev/null || echo '(沒有產生 gaps.log)'
+            echo '```'
+          } > issue.md
+
+          NUM=$(gh issue list --state open --limit 20 --json number,title \
+                  --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body-file issue.md
+            echo "已在 issue #$NUM 留言"
+          else
+            gh issue create --title "$TITLE" --body-file issue.md
+          fi

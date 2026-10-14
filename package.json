@@ -9,6 +9,7 @@
     "lint": "eslint",
     "sync": "tsx scripts/sync.ts",
     "backfill": "tsx scripts/backfill.ts",
+    "check-gaps": "tsx scripts/check-gaps.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
