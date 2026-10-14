@@ -1,5 +1,5 @@
 /**
- * 缺日偵測：把「證交所行事曆說該開市的日子」跟「資料庫實際落地的日子」對一遍。
+ * 缺日偵測：把「證交所說該開市的日子」跟「資料庫實際落地的日子」對一遍。
  *
  * 為什麼需要這支：
  *   同步失敗會變紅燈，看得見；但「同步成功卻什麼有用的都沒寫」不會。
@@ -10,17 +10,29 @@
  *
  *   唯一靠得住的判準是「該有的交易日到底在不在資料庫裡」，而不是「同步有沒有報錯」。
  *
- * 另外也抓「有寫但寫不全」：2026-09-30 那次上市只有 329 檔（其他是回補順手寫的），
+ * ── 兩個會誤報的坑 ──────────────────────────────────────────
+ *
+ * 1. 行事曆沒有颱風假。
+ *    `fetchMarketHolidays()` 來源是預先公告的國定假日，不含當天才宣布的臨時休市。
+ *    2026-07-10 就是這種：行事曆說它是交易日，但全市場一筆都沒有。
+ *    所以看起來缺的日子不能直接判缺——要再帶日期去問證交所那天到底有沒有開市。
+ *
+ * 2. 歷史區本來就是稀疏的。
+ *    `stock_daily` 的設計是「每月最後交易日 ＋ 近期逐日」，不是每天都留。
+ *    稠密區從 2026-07-03 起算，再往前每天只有個位數檔（月底那天才是全市場）。
+ *    視窗拉過 60 天就會掃進稀疏區，把設計當成缺漏。預設 30 天是為了這個。
+ *
+ * 除了整天 0 筆，也抓「有寫但寫不全」：2026-09-30 那次上市只有 329 檔，
  * 那天會因為涵蓋度不足被基準日下拉濾掉，等於也是沒有。
  * 門檻用當期中位數的一半，不寫死檔數——上市櫃家數本來就會變。
  *
  *   npm run check-gaps                 檢查近 30 天，有缺就 exit 1
- *   npm run check-gaps -- --days 90    拉長檢查範圍
- *   npm run check-gaps -- --warn       只印不失敗（想先看看的時候用）
+ *   npm run check-gaps -- --days 90    拉長檢查範圍（會掃到稀疏區，見上）
+ *   npm run check-gaps -- --warn       只印不失敗
  */
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { fetchMarketHolidays } from '../src/lib/twse';
+import { fetchMarketHolidays, fetchTwseMarketOpen } from '../src/lib/twse';
 
 try {
   process.loadEnvFile('.env');
@@ -65,6 +77,8 @@ function dow(date: string): number {
   return new Date(`${date}T00:00:00Z`).getUTCDay();
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
 });
@@ -80,8 +94,8 @@ async function main() {
   console.log(`缺日偵測  ${from} ~ ${today}（台北時間，共 ${DAYS} 天）\n`);
   if (DAYS > 60) {
     console.log(
-      '  ! 視窗超過 60 天：stock_daily 的稠密區從 2026-06-30 起算，' +
-        '再往前是歷史回補的爬升期（每天只有個位數檔），會被判成涵蓋不足。\n',
+      '  ! 視窗超過 60 天：stock_daily 的稠密區從 2026-07-03 起算，再往前是\n' +
+        '    「每月最後交易日」的稀疏歷史（設計如此，不是缺漏），會被判成涵蓋不足。\n',
     );
   }
 
@@ -116,19 +130,22 @@ async function main() {
   const thin: string[] = [];
   const pending: string[] = [];
   const unknown: string[] = [];
+  const adhoc: string[] = [];
+  const suspects: string[] = [];
+  const line = new Map<string, string>();
 
-  console.log('日期         狀態');
+  // ── 第一輪：先用行事曆與資料庫分類，不碰外部 API ──────────────
   for (const date of eachDay(from, today)) {
     const d = dow(date);
     if (d === 0 || d === 6) continue;
 
     const holiday = closed.get(date);
     if (holiday) {
-      console.log(`${date}   休市（${holiday}）`);
+      line.set(date, `休市（${holiday}）`);
       continue;
     }
     if (!coveredYears.has(date.slice(0, 4))) {
-      console.log(`${date}   ? 行事曆沒有這一年，無法判定`);
+      line.set(date, '? 行事曆沒有這一年，無法判定');
       unknown.push(date);
       continue;
     }
@@ -136,26 +153,54 @@ async function main() {
     const row = have.get(date);
     if (!row || row.total === 0) {
       if (Date.now() < dueAt(date)) {
-        console.log(`${date}   尚未到期（台北 17:00 後才該有）`);
+        line.set(date, '尚未到期（台北 17:00 後才該有）');
         pending.push(date);
       } else {
-        console.log(`${date}   缺漏  <-- 該有行情卻一筆都沒有`);
-        missing.push(date);
+        // 先記下來，等一下逐一問證交所那天到底有沒有開市
+        suspects.push(date);
       }
       continue;
     }
     if (row.twse < floor) {
-      console.log(
-        `${date}   涵蓋不足  上市 ${row.twse} / 門檻 ${floor}（上櫃 ${row.tpex}，合計 ${row.total}）`,
+      line.set(
+        date,
+        `涵蓋不足  上市 ${row.twse} / 門檻 ${floor}（上櫃 ${row.tpex}，合計 ${row.total}）`,
       );
       thin.push(date);
       continue;
     }
-    console.log(`${date}   OK    上市 ${row.twse}  上櫃 ${row.tpex}  合計 ${row.total}`);
+    line.set(date, `OK    上市 ${row.twse}  上櫃 ${row.tpex}  合計 ${row.total}`);
+  }
+
+  // ── 第二輪：可疑的日子才去問證交所，避免把颱風假當成掉資料 ────
+  if (suspects.length) {
+    console.log(`  有 ${suspects.length} 天看起來缺漏，逐一向證交所確認是否臨時休市…`);
+    for (const date of suspects) {
+      const open = await fetchTwseMarketOpen(date);
+      if (open === false) {
+        line.set(date, '臨時休市（證交所該日無資料，行事曆查不到，多半是颱風假）');
+        adhoc.push(date);
+      } else if (open === null) {
+        line.set(date, '? 證交所問不到，無法判定是缺漏還是休市');
+        unknown.push(date);
+      } else {
+        line.set(date, '缺漏  <-- 證交所那天有開市，資料庫卻一筆都沒有');
+        missing.push(date);
+      }
+      await sleep(1200); // 這支是舊版報表，別打太快
+    }
+    console.log('');
+  }
+
+  console.log('日期         狀態');
+  for (const date of eachDay(from, today)) {
+    const text = line.get(date);
+    if (text) console.log(`${date}   ${text}`);
   }
 
   const bad = missing.length + thin.length;
   console.log('');
+  if (adhoc.length) console.log(`  臨時休市 ${adhoc.length} 天：${adhoc.join(', ')}`);
   if (unknown.length) console.log(`  無法判定 ${unknown.length} 天：${unknown.join(', ')}`);
   if (pending.length) console.log(`  尚未到期 ${pending.length} 天：${pending.join(', ')}`);
 

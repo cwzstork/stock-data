@@ -408,3 +408,45 @@ export async function fetchMarketHolidays(): Promise<MarketHoliday[]> {
       description: String(r.Description ?? '').replace(/<br>/g, '').trim(),
     }));
 }
+
+/**
+ * 某個日期證交所到底有沒有開市。
+ *
+ * 為什麼光看行事曆不夠：`fetchMarketHolidays()` 來源是「預先公告」的國定假日，
+ * 不含颱風假這種當天才宣布的臨時休市。2026-07-10 就是這種——
+ * 行事曆說它是交易日，但全市場一筆資料都沒有。
+ * 只靠行事曆判斷缺日，每個颱風天都會誤報一次。
+ *
+ * 這支打的是帶日期參數的舊版報表（openapi 那組一律不吃日期）：
+ *   有開市 → {"stat":"OK", ...}
+ *   沒開市 → {"stat":"很抱歉，沒有符合條件的資料!"}
+ *
+ * 用 type=MS（大盤統計）而不是 type=ALL：同樣的 stat 語意，
+ * 但回應 1.2 KB 而不是 4 MB，而這支只是拿來問「有沒有開市」。
+ *
+ * 回傳 null = 問不到（連線失敗、或格式又變了）。
+ * 呼叫端要把 null 當成「不確定」而不是「沒開市」，
+ * 否則真的掉資料時會被這支默默吃掉。
+ */
+export async function fetchTwseMarketOpen(isoDate: string): Promise<boolean | null> {
+  const compact = isoDate.replace(/-/g, '');
+  const url =
+    'https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX' +
+    `?date=${compact}&type=MS&response=json`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    // 不用 JSON.parse：這支偶爾會吐出 parse 吃不下的內容，而我們只要 stat
+    const stat = /"stat"\s*:\s*"([^"]*)"/.exec(text)?.[1];
+    if (!stat) return null;
+    if (stat === 'OK') return true;
+    if (stat.includes('沒有符合條件')) return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
