@@ -1,6 +1,7 @@
 # 台股篩選器
 
-上市 / 上櫃 / 興櫃的 73 欄篩選器，含即時報價。資料來自證交所、櫃買中心與 FinMind。
+上市 / 上櫃 / 興櫃的 73 欄篩選器，含即時報價與每日的宏觀事件預覽。行情與財報來自證交所、櫃買中心與 FinMind，
+宏觀新聞來自 Google 新聞、Fed、EIA、Yahoo 股市的公開 RSS。
 
 ## 功能
 
@@ -9,8 +10,10 @@
 | `/` | 73 欄篩選器。條件存在網址上，可命名存起來、可匯出 CSV |
 | `/live` | 即時報價（證交所 MIS，約延遲 20 秒）。中文模糊搜尋＋多選，**預設載入市值前 50 大** |
 | `/stock/[id]` | **個股技術線圖**。**日線／週線／月線**，K 線、MA5/10/20、布林通道、法人成本、成交量，副圖可切 KD／RSI／MACD／法人買賣超／籌碼。十字游標顯示該期所有數字，可拖曳平移與滾輪縮放 |
+| `/macro` | **宏觀事件預覽**。每天整理美國／台灣政策、產業、國際資金、戰爭地緣、能源新聞與指標，列出可能受影響的台股、利多或利空、影響週期。報告每天留存，可匯出 HTML 後刪除 |
 | `/api/export` | 同條件的 CSV 匯出，含 BOM，Excel 直接開 |
 | `/api/search` | 股票搜尋，給多選器用 |
+| `/api/macro/export` | 宏觀事件報告匯出成單一 HTML 檔（樣式內嵌，可直接開或列印成 PDF） |
 
 欄位分八類：日頻行情、季頻財報（單季／累計／近四季／年增率／**年度值與 ROE 多年平均**／**EPS 連續成長**）、**現金流量**、
 **月營收與自算預估 EPS**、配息、年度彙總與便宜價、內部人持股、識別欄位。
@@ -32,7 +35,8 @@
 | 線圖 | lightweight-charts（TradingView 開源版） | — |
 | 資料庫 | Neon PostgreSQL 18 | 0.5 GB |
 | 日頻明細 | Parquet on GitHub Release | 單檔 2 GB、每個 release 1,000 個檔，不計入 repo |
-| 每日同步 / 歷史回補 | GitHub Actions | 公開 repo 免費 |
+| 每日同步 / 歷史回補 / 宏觀報告 | GitHub Actions | 公開 repo 免費 |
+| 宏觀新聞 | Google 新聞搜尋、Fed、EIA、Yahoo 股市的 RSS | 免金鑰 |
 | 部署 | Vercel（函式區域 `sin1`） | Hobby（個人非商業用途） |
 
 ```
@@ -41,12 +45,15 @@ src/
     page.tsx              篩選器
     live/page.tsx         即時報價
     stock/[id]/page.tsx   個股技術線圖
+    macro/page.tsx        宏觀事件預覽
     api/export/route.ts   CSV 匯出
     api/search/route.ts   股票搜尋
+    api/macro/export/route.ts  宏觀報告匯出 HTML
   components/
     AppNav.tsx            全站頂部導覽（client component）
     StockPicker.tsx       多選器（client component）
     StockChart.tsx        K 線圖（client component）
+    MacroExportPanel.tsx  宏觀報告的匯出與刪除（client component）
   lib/
     prisma.ts             PrismaClient（延遲初始化 + driver adapter）
     screener.ts           篩選條件解析與查詢組裝
@@ -57,11 +64,16 @@ src/
     live.ts               證交所 MIS 即時報價
     history.ts            線圖的日線、技術指標（布林／KD／RSI／MACD）、法人成本與籌碼面
     parquet.ts            日頻明細轉 Parquet（DuckDB）
-    http.ts               帶重試的 fetch、併發限制
+    http.ts               帶重試的 fetch（JSON 與 RSS 純文字）、併發限制
+    macro-rules.ts        宏觀事件的新聞來源、主題關鍵字、受影響個股與週期（對照表）
+    macro.ts              宏觀事件：抓 RSS 與指標、比對主題、產生一天的報告
+    macro-store.ts        宏觀事件：讀取、容量統計、匯出 HTML
+    macro-actions.ts      宏觀事件：刪除（server action，驗管理密碼）
 scripts/
   sync.ts                 每日同步
   backfill.ts             逐檔歷史回補（四個資料集）
   check-gaps.ts           比對證交所行事曆，找出該有卻沒落地的交易日
+  macro.ts                產生當天的宏觀事件報告
 ```
 
 ## 資料來源
@@ -82,6 +94,46 @@ FinMind 是單季），混進同一張表會變成一半累計一半單季而且
 改用**自算預估**：月營收是官方每月公告的免費資料，用「已公布月份實際值 ＋
 剩餘月份（去年同期 × 今年累計成長率）× 淨利率 ÷ 股數」推估。
 算式公開可檢驗，而且月營收有十年歷史，推估法準不準可以回測。
+
+## 宏觀事件預覽
+
+每天兩輪由 GitHub Actions 產生一份報告（台北日期一天一份，同一天重跑是覆蓋）：
+
+1. 抓 25 個 RSS：Google 新聞搜尋（依六類各 2～5 個查詢）、Fed 貨幣政策新聞稿、EIA、Yahoo 股市。
+   同標題去重，只留這次時間窗裡發布的——時間窗接在前一天那份的結尾，不重複也不漏。
+2. 每則標題比對 `src/lib/macro-rules.ts` 的 **26 個主題、45 檔個股**（美國降息、晶片出口管制、電價調漲、
+   AI 伺服器需求、外資賣超、中東情勢、國際油價…），判斷方向。
+3. FinMind 的四個指標——外資近 5 日買賣超、美元兌新台幣、WTI、美債 10 年期——波動超過門檻
+   也算一筆證據（外資 ±300 億、匯率 ±1%、油價 ±5%、美債 ±0.15 個百分點）。
+4. 有證據的主題列出受影響個股：利多／利空 ＝ 規則方向 × 當天整體方向，
+   週期分短期（數日～2 週）、中期（1～3 個月）、長期（3 個月以上）。
+
+**這不是 AI 判讀，是關鍵字規則。**個股與方向是依產業常見的傳導關係預先寫好的
+（例如油價 → 台塑化存貨評價、航空燃油成本），回答的是「這類消息通常會牽動誰」。
+選這個做法是因為免費；代價是只看得到標題、只認得寫過的說法。
+產生報告時會拿 `stock` 主檔逐一核對股號與股名，對不上的直接略過——寫錯一個代號，
+寧可少一檔，也不要把利多掛到另一家公司頭上。
+
+規則是拿實際標題抽樣修出來的，幾個踩過的誤判：
+
+| 誤判 | 修正 |
+|---|---|
+| 「紐西蘭央行升息」「央行估聯準會年底再升息」算成台灣央行升息 | 台灣央行主題擋掉其他國家與聯準會、也擋問句（「升息降息？」是會前預測） |
+| 「降息」「關稅」抓到歐洲央行、歐盟的新聞 | 美國主題要帶美國的主詞（聯準會、Fed、美國、白宮） |
+| 「以色列大選」「國籍航空飛越俄羅斯領空」算成戰事升溫 | 戰爭類要「地名 ＋ 衝突字眼」同時出現；停火、和談把方向反過來 |
+| 「外資砸數十億買超南亞科」「《外資》買超股：力積電…」算成大盤外資動向 | 外資主題要有台股、大盤、億元、匯出這類大盤層級字眼，排行榜標題直接擋 |
+| 「美日利劍軍演」算成台海情勢 | 軍演要是對台的（共軍、解放軍、東部戰區、圍台） |
+| 「OPEC 減產」「記憶體減產」算成下跌 | 這兩個主題的漲跌字眼各自定義，減產算上漲 |
+
+**容量**：熱門主題一天上百則（中東情勢 110 則），多半是同一件事的不同報導，
+所以每個主題只留最新 8 則當證據、其餘只計入則數；沒對到主題的新聞每類留 5 則。
+全留的話實測一天 333 KB，這樣是 **約 94 KB／天、一年約 34 MB**。
+
+**匯出與刪除**：頁面上選日期區間按「匯出報告」，下載一個 HTML 檔（樣式內嵌、沒有外部相依，
+可以直接開或列印成 PDF）。下載完會問要不要把**剛匯出的那幾份**從資料庫刪掉——
+刪除範圍取自匯出回應，而且只刪「產生時間不晚於匯出當下」的，
+匯出之後才被排程覆蓋的那天不會跟著被刪。刪除要輸入管理密碼（Vercel 的 `MACRO_ADMIN_PASSWORD`），
+沒設定時只能看與匯出。
 
 ## 設計原則
 
@@ -124,6 +176,9 @@ npm run backfill -- --commit '--stocks=2330,0056' 指定股票
 npm run check-gaps            近 30 天該有的交易日有沒有缺，有缺就 exit 1
 npm run check-gaps -- --days 90   拉長視窗
 npm run check-gaps -- --warn      只印不失敗
+
+npm run macro                 宏觀事件預覽乾跑：真的抓新聞、真的 INSERT，再 rollback
+npm run macro -- --commit     產生今天（台北日期）的報告，同一天重跑是覆蓋
 ```
 
 > `check-gaps` 預設視窗 30 天是有理由的：`stock_daily` 的稠密區從 **2026-07-03**
@@ -151,6 +206,7 @@ npm run check-gaps -- --warn      只印不失敗
 |---|---|---|
 | `sync.yml` | 平日 ×4 ＋ 週六 ×1（`17 10/14/18/22 * * 1-5`、`17 3 * * 6`） | 主檔、當日行情、股本、內部人持股、月營收 ＋ 缺日偵測 |
 | `backfill.yml` | 每 6 小時（`7 */6 * * *`） | 逐檔回補，單輪跑滿 4.7 小時 |
+| `macro.yml` | 每天 ×2，含週末（`23 19 * * *`、`23 23 * * *`） | 宏觀事件預覽。延遲 2～5 小時後約落在台北 05:30～08:30 與 09:30～12:30 |
 
 > 同步排四輪，是因為兩個來源的出表時間差了半天多：櫃買 D 當天晚上就出 D，
 > 證交所要 D+1 清晨 03:00～05:20（openapi 是夜間批次）。加上 GitHub 實測
@@ -176,7 +232,8 @@ npm run check-gaps -- --warn      只印不失敗
 ## 部署到 Vercel
 
 1. <https://vercel.com/new> → 匯入這個 repo，框架自動偵測為 Next.js
-2. 展開 **Environment Variables**，加入 `DATABASE_URL`、`DIRECT_URL`、`FINMIND_TOKEN`
+2. 展開 **Environment Variables**，加入 `DATABASE_URL`、`DIRECT_URL`、`FINMIND_TOKEN`，
+   以及選填的 `MACRO_ADMIN_PASSWORD`（宏觀事件預覽的刪除密碼）
 3. Deploy
 
 `vercel.json` 把函式區域釘在 `sin1`（新加坡），因為 Neon 開在 `ap-southeast-1`。
@@ -194,6 +251,7 @@ build 失敗，只會在開頁面時才報 `DATABASE_URL 未設定`。
 | `DATABASE_URL` | 執行期連線，**pooled**（host 含 `-pooler`）。走 Prisma driver adapter |
 | `DIRECT_URL` | `prisma migrate` 專用，**direct**。走 pooler 會因為拿不到 advisory lock 而失敗 |
 | `FINMIND_TOKEN` | FinMind API token |
+| `MACRO_ADMIN_PASSWORD` | 宏觀事件預覽刪除報告用的管理密碼。**只設在 Vercel**（Settings → Environment Variables，建議勾 Sensitive），GitHub Actions 不需要。沒設定時刪除功能停用，看與匯出不受影響；改了要重新部署才生效 |
 | `PARQUET_DIR` | 回補時把日頻明細寫成 Parquet 的資料夾。沒設就跳過 |
 | `PARQUET_BASE_URL` | 既有年度 Parquet 的網址前綴，跨輪執行時用來合併。沒設就整包重建 |
 
@@ -213,6 +271,7 @@ build 失敗，只會在開頁面時才報 `DATABASE_URL 未設定`。
 | `stock_revenue` | 月營收（上市＋上櫃，興櫃不強制公告） | `stock_id, month` |
 | `saved_filter` | 存起來的篩選條件 | `id` |
 | `backfill_log` | 逐檔回補進度 | `stock_id, dataset` |
+| `macro_report` | 宏觀事件預覽，一天一份報告的快照（JSONB） | `report_date` |
 
 ### 幾個對位規則
 

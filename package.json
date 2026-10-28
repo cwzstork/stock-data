@@ -10,6 +10,7 @@
     "sync": "tsx scripts/sync.ts",
     "backfill": "tsx scripts/backfill.ts",
     "check-gaps": "tsx scripts/check-gaps.ts",
+    "macro": "tsx scripts/macro.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

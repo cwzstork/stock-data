@@ -327,3 +327,64 @@ export async function fetchMonthRevenue(
     start_date: startDate,
   });
 }
+
+// ── 宏觀指標（宏觀事件預覽用，一天各一次呼叫）──────────────────────────
+//
+// 這四個資料集 register 層不帶 data_id 也查得到（大盤法人本來就沒有 data_id），
+// 實測 2026-10-28 各 60~310 ms。
+// 更新節奏不同：法人與匯率隔一個交易日、美債隔一兩天，原油最慢——
+// 10-28 查到的最新一筆是 10-20，所以使用端一定要看資料日期。
+
+export interface MarketInstitutionalRow {
+  date: string;
+  /** Foreign_Investor / Foreign_Dealer_Self / Investment_Trust / Dealer_self / Dealer_Hedging / total */
+  name: string;
+  /** 單位：元 */
+  buy: number;
+  sell: number;
+}
+
+/** 整體市場三大法人買賣金額（上市） */
+export async function fetchMarketInstitutional(startDate: string): Promise<MarketInstitutionalRow[]> {
+  return request<MarketInstitutionalRow>('TaiwanStockTotalInstitutionalInvestors', {
+    start_date: startDate,
+  });
+}
+
+export interface ExchangeRateRow {
+  date: string;
+  currency: string;
+  cash_buy: number;
+  cash_sell: number;
+  spot_buy: number;
+  spot_sell: number;
+}
+
+/** 台銀牌告匯率。currency 例如 USD */
+export async function fetchExchangeRate(currency: string, startDate: string): Promise<ExchangeRateRow[]> {
+  return request<ExchangeRateRow>('TaiwanExchangeRate', { data_id: currency, start_date: startDate });
+}
+
+export interface CrudeOilRow {
+  date: string;
+  /** WTI / Brent */
+  name: string;
+  /** 美元／桶 */
+  price: number;
+}
+
+export async function fetchCrudeOil(name: 'WTI' | 'Brent', startDate: string): Promise<CrudeOilRow[]> {
+  return request<CrudeOilRow>('CrudeOilPrices', { data_id: name, start_date: startDate });
+}
+
+export interface BondYieldRow {
+  date: string;
+  /** 例如 United States 10-Year */
+  name: string;
+  /** 殖利率 % */
+  value: number;
+}
+
+export async function fetchBondYield(name: string, startDate: string): Promise<BondYieldRow[]> {
+  return request<BondYieldRow>('GovernmentBondsYield', { data_id: name, start_date: startDate });
+}

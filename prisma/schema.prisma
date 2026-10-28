@@ -318,3 +318,21 @@ model StockRevenue {
   @@index([month])
   @@map("stock_revenue")
 }
+
+/// 宏觀事件預覽：一天一份報告。
+/// 來源：Google 新聞／Fed／EIA 的 RSS ＋ FinMind 的大盤法人、匯率、油價、美債殖利率
+///
+/// 存的是「當天的快照」而不是拆成新聞、主題、個股三張表：
+/// 報告產生之後就不再修改，畫面與匯出都是整份讀，沒有跨日聚合的查詢需求；
+/// 拆表只會多出三組外鍵與刪除時的連鎖，換不到任何東西。
+/// 結構見 src/lib/macro.ts 的 MacroPayload。
+///
+/// 刪除是預期中的操作：使用者匯出 HTML 之後可以把這段期間刪掉，騰出免費層的空間。
+model MacroReport {
+  /// 台北日期。同一天重跑是覆蓋，不會多一份
+  reportDate  DateTime @id @map("report_date") @db.Date
+  generatedAt DateTime @map("generated_at") @db.Timestamptz(3)
+  payload     Json
+
+  @@map("macro_report")
+}

@@ -89,6 +89,36 @@ export async function fetchJson<T>(
 }
 
 /**
+ * 帶重試的純文字取得（RSS 用）。重試規則同 fetchJson：body 也包在重試裡、只重試 5xx 與網路錯誤。
+ * 非 2xx 直接丟錯——RSS 沒有「錯誤訊息在 body 裡」這回事，回 200 以外就是拿不到。
+ */
+export async function fetchText(
+  url: string | URL,
+  { label = String(url), attempts = 3, timeoutMs = 30_000, backoffMs = 1_000, headers = {} }: FetchJsonOptions = {},
+): Promise<string> {
+  const retryable = new Set(DEFAULT_RETRY_STATUS);
+  let lastError: unknown;
+
+  for (let i = 1; i <= attempts; i += 1) {
+    try {
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+      if (res.ok) return await res.text();
+      lastError = new Error(`HTTP ${res.status}`);
+      if (!retryable.has(res.status)) break;
+    } catch (e) {
+      lastError = e;
+    }
+    if (i === attempts) break;
+
+    const waitMs = backoffMs * 2 ** (i - 1);
+    console.warn(`  [retry ${i}/${attempts - 1}] ${label}: ${describe(lastError)}，${waitMs / 1000}s 後重試`);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+
+  throw new Error(`${label}：${describe(lastError)}`, { cause: lastError });
+}
+
+/**
  * 限制同時進行的數量。
  *
  * 一次把二三十個請求全丟出去，對方或中間的代理很容易直接切連線，

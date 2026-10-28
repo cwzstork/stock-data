@@ -1,0 +1,90 @@
+name: 宏觀事件預覽
+
+on:
+  schedule:
+    # 每天兩輪（含週末——戰爭與政策消息不挑日子）。
+    #
+    # GitHub 排程實測延遲 2～5 小時（見 sync.yml），所以排得比想要的時間早：
+    #
+    #   19:23 UTC → 台北 03:23，實際約 05:30～08:30 落地，開盤前看得到
+    #   23:23 UTC → 台北 07:23，實際約 09:30～12:30，補進早上的新聞
+    #
+    # 同一天第二輪是覆蓋，時間窗從「前一天那份的結尾」重抓到現在，
+    # 所以只會讓當天的報告更完整，不會重複也不會漏。
+    # 分鐘選 :23 避開整點與半點（GitHub 最壅塞、最常延遲或整個丟棄的時段）。
+    - cron: '23 19 * * *'
+    - cron: '23 23 * * *'
+  workflow_dispatch:
+
+# 失敗時要開 issue，所以需要寫入權限；其餘維持唯讀
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: macro
+  cancel-in-progress: false
+
+jobs:
+  macro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安裝相依套件
+        run: npm ci
+
+      - name: 產生報告
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        shell: bash
+        run: |
+          # 預設的 bash -e 不含 pipefail，接了 tee 之後失敗會被 tee 的 0 蓋掉
+          set -o pipefail
+          npm run macro -- --commit 2>&1 | tee macro.log
+
+      - name: 把結果貼到執行摘要
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### 宏觀事件預覽'
+            echo '```'
+            tail -n 80 macro.log 2>/dev/null || echo '(沒有產生 log，通常是安裝階段就失敗了)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 個別新聞來源抓不到不算失敗（報告的「來源」會標出來）；
+      # 只有全部來源都掛、或寫資料庫失敗才會走到這裡
+      - name: 失敗時開 issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          TITLE="宏觀事件預覽失敗 $(TZ=Asia/Taipei date +%F)"
+          {
+            echo "觸發：\`${{ github.event_name }}\`　執行：$RUN_URL"
+            echo ""
+            echo '```'
+            tail -n 40 macro.log 2>/dev/null || echo '(沒有產生 macro.log)'
+            echo '```'
+          } > issue.md
+
+          NUM=$(gh issue list --state open --limit 20 --json number,title \
+                  --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body-file issue.md
+            echo "已在 issue #$NUM 留言"
+          else
+            gh issue create --title "$TITLE" --body-file issue.md
+          fi

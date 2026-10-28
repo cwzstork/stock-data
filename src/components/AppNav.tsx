@@ -22,6 +22,7 @@ import { usePathname, useRouter } from 'next/navigation';
 const TABS = [
   { href: '/', label: '台股篩選器' },
   { href: '/live', label: '即時報價' },
+  { href: '/macro', label: '宏觀事件預覽' },
 ] as const;
 
 export default function AppNav() {

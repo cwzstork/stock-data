@@ -558,6 +558,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td><code>stock_dividend</code></td><td class="num">22,349</td><td class="num">2,472 kB</td><td class="num">123 B</td><td>2015-04-23 ~ 2026-11-05</td></tr>
 <tr><td><code>stock_capital</code></td><td class="num">2,359</td><td class="num">608 kB</td><td class="num">—</td><td>2026-09-28 ~ 2026-09-30</td></tr>
 <tr><td><code>stock_insider</code></td><td class="num">1,975</td><td class="num">584 kB</td><td class="num">—</td><td>2026-08-31</td></tr>
+<tr><td><code>macro_report</code></td><td class="num">1</td><td class="num">260 kB</td><td class="num">約 94 KB／份</td><td>宏觀事件預覽，2026-10-28 起一天一份（2026-10-28 新增）</td></tr>
 </table></div>
 <p><small>「每列」只對列數上萬的表才有意義——列數少時索引的固定開銷會把數字撐大
 （<code>stock_quarterly</code> 現在算出來是 398 B／列，補滿之後會降到 260 B 上下）。
@@ -586,6 +587,7 @@ Q1 1,134,103,440,000 ＋ Q2 1,270,380,250,000 ＝ 2,404,483,690,000，
 <tr><td><strong>全部回補完成（實際）</strong></td><td class="num"><strong>143 MB</strong></td><td>已用 28%，剩餘 369 MB</td></tr>
 <tr><td>每日同步成長</td><td class="num">+0.53 MB／交易日</td><td>2,754 列 × 190 bytes，加月營收與季報攤平後的量</td></tr>
 <tr><td><strong>預估爆掉時間</strong></td><td class="num"><strong>約 2.9 年後</strong></td><td>369 ÷ 0.53 ≈ 696 個交易日</td></tr>
+<tr><td>宏觀事件預覽（2026-10-28 新增）</td><td class="num">+約 0.1 MB／天</td><td>含週末，一年約 34 MB。<strong>一直不刪的話</strong>，上面的 2.9 年會縮短到約 2.2 年；頁面上「匯出報告」之後可以把匯出的那段刪掉，等於不佔空間</td></tr>
 </table></div>
 
 <div class="todo">
