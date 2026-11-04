@@ -268,6 +268,14 @@ function pickDailyDates(prices: PriceRow[]): Set<string> {
   return picked;
 }
 
+/**
+ * 寫進 stock_daily 的那一段。NULL 不覆寫既有值，理由見 sync.ts 的 upsertDaily。
+ *
+ * 這支特別容易踩到：pers 來自 FinMind，ETF 與興櫃本來就回空陣列（見 runAnnual
+ * 的註解），而且 perByDate 只要少一天，那天的評價就是 NULL。沒有 COALESCE 的話，
+ * 每 6 小時輪一批、每批重寫近 61 個交易日，等於拿 FinMind 的缺漏去洗掉
+ * 證交所已經寫好的評價。
+ */
 async function writeDailyRows(stockId: string, prices: PriceRow[], pers: PerRow[]) {
   const wanted = pickDailyDates(prices);
   const perByDate = new Map(pers.map((p) => [p.date, p]));
@@ -292,8 +300,12 @@ async function writeDailyRows(stockId: string, prices: PriceRow[], pers: PerRow[
                    $7::text[], $8::text[])
             AS x(id, dt, cl, vol, tv, dy, pe, pb)
      ON CONFLICT (stock_id, trade_date) DO UPDATE SET
-       close = EXCLUDED.close, volume = EXCLUDED.volume, turnover = EXCLUDED.turnover,
-       dividend_yield = EXCLUDED.dividend_yield, per = EXCLUDED.per, pbr = EXCLUDED.pbr`,
+       close          = COALESCE(EXCLUDED.close,          stock_daily.close),
+       volume         = COALESCE(EXCLUDED.volume,         stock_daily.volume),
+       turnover       = COALESCE(EXCLUDED.turnover,       stock_daily.turnover),
+       dividend_yield = COALESCE(EXCLUDED.dividend_yield, stock_daily.dividend_yield),
+       per            = COALESCE(EXCLUDED.per,            stock_daily.per),
+       pbr            = COALESCE(EXCLUDED.pbr,            stock_daily.pbr)`,
     ...c,
   );
 }

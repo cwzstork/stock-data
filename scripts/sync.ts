@@ -94,6 +94,27 @@ async function upsertStocks(
   return n;
 }
 
+/**
+ * 日頻的 upsert：NULL 一律不覆寫既有值。
+ *
+ * 同一檔股票、同一個交易日的收盤價與評價是固定的歷史事實，不會改。
+ * 所以某個欄位是 NULL 只有一種意思——「這一輪沒拿到」，而不是「它本來就沒有」。
+ * 拿「沒拿到」去蓋掉「已經拿到的」，任何時候都是錯的。
+ *
+ * 不加 COALESCE 會這樣無聲掉資料：BWIBBU_ALL 回了一個合法的空陣列
+ * （不是錯誤，所以 http.ts 的擋頁偵測不會攔；日期守門也不會擋——它只檢查行情，
+ * 不檢查評價），那天已經寫好的本益比、股價淨值比、殖利率就被整批 NULL 洗掉。
+ * 而且 job 全綠，缺日偵測也不會紅——它數的是那天有沒有列，列還在。
+ *
+ * backfill.ts 的 writeDailyRows 寫同一張表、同一段日期（近 61 個交易日，
+ * 每 6 小時輪一批），而且它的評價來自 FinMind，ETF 與興櫃本來就回空陣列，
+ * 更容易踩到。兩支都要加，只加一支等於沒加。
+ *
+ * 代價：上游若把某個值「改成沒有」，這裡就跟不上。實際只發生過一次——
+ * per/pbr 的 0 改寫成 NULL（2026-09-29、2026-10-30 兩段），掉的全是 0，
+ * per > 0 的檔數從頭到尾穩定在 870~875，真正有意義的值一個都沒動過。
+ * 用「跟不上一個無意義的 0」換「不會洗掉真值」，划算。
+ */
 async function upsertDaily(tx: Tx, rows: (DailyQuote & Partial<Valuation>)[]) {
   let n = 0;
   for (const part of chunks(rows)) {
@@ -113,12 +134,12 @@ async function upsertDaily(tx: Tx, rows: (DailyQuote & Partial<Valuation>)[]) {
          FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
               AS x(id, dt, cl, vol, tv, dy, pe, pb)
        ON CONFLICT (stock_id, trade_date) DO UPDATE SET
-         close          = EXCLUDED.close,
-         volume         = EXCLUDED.volume,
-         turnover       = EXCLUDED.turnover,
-         dividend_yield = EXCLUDED.dividend_yield,
-         per            = EXCLUDED.per,
-         pbr            = EXCLUDED.pbr`,
+         close          = COALESCE(EXCLUDED.close,          stock_daily.close),
+         volume         = COALESCE(EXCLUDED.volume,         stock_daily.volume),
+         turnover       = COALESCE(EXCLUDED.turnover,       stock_daily.turnover),
+         dividend_yield = COALESCE(EXCLUDED.dividend_yield, stock_daily.dividend_yield),
+         per            = COALESCE(EXCLUDED.per,            stock_daily.per),
+         pbr            = COALESCE(EXCLUDED.pbr,            stock_daily.pbr)`,
       ...cols,
     );
   }
