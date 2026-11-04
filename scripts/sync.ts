@@ -197,6 +197,38 @@ async function upsertRevenue(tx: Tx, rows: MonthlyRevenue[]) {
   return n;
 }
 
+/**
+ * 附帶來源的取得：抓不到不算整輪失敗，回空陣列往下走。
+ *
+ * 2026-11-03 那輪（issue #7）就是死在這裡：「上市月營收」被證交所的 WAF
+ * 連擋四次，Promise.all 於是把整輪同步一起拒絕掉——連已經抓回來的當日行情
+ * 都一起丟了。但月營收一個月才出一次（當月的要次月 10 號才公告），
+ * 晚一輪、晚一天抓完全沒差；當日行情卻只有一段固定的時間窗
+ * （D+1 清晨出表 ~ D+2 清晨被翻成 D+1），錯過就只能走 FinMind 逐檔補。
+ * 讓沒有期限的來源有權利拖垮有期限的來源，方向是反的。
+ *
+ * 只有同時滿足這兩點的來源能走這條路：
+ *   1. 晚一輪抓沒有差——沒有「只給最新一筆」那種時間窗
+ *   2. 下游是純 upsert——空陣列就是寫 0 列，不會刪到既有資料
+ * 當日行情兩點都不滿足，所以它不能用 optional()。
+ *
+ * 略過了什麼會記在 skipped 裡，最後一併印出來。真正掉資料的警報不在這裡，
+ * 在缺日偵測——它看的是資料庫裡到底有沒有那一天，不是這一輪有沒有抓到。
+ */
+const skipped: string[] = [];
+
+async function optional<T>(label: string, fn: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await fn();
+  } catch (e) {
+    skipped.push(label);
+    console.warn(
+      `  ! ${label} 抓取失敗，這次略過、下一輪再補：${e instanceof Error ? e.message : String(e)}`,
+    );
+    return [];
+  }
+}
+
 const COUNT_SQL = `SELECT 'stock' AS t, count(*) AS n FROM stock
    UNION ALL SELECT 'stock_daily', count(*) FROM stock_daily
    UNION ALL SELECT 'stock_capital', count(*) FROM stock_capital
@@ -209,18 +241,38 @@ async function main() {
   console.log(`\n=== 台股同步 ${COMMIT ? '【實際寫入】' : '【乾跑 DRY RUN，最後會 rollback】'} ===\n`);
 
   // ── 1. 抓資料 ───────────────────────────────────────────────
+  //
+  // 分兩批，關鍵的先跑完，附帶的才上。
+  //
+  // 為什麼要分：見 optional() 的說明——附帶來源沒有時間窗，
+  // 不該有權利拖垮有時間窗的當日行情。
+  //
+  // 為什麼關鍵的要「先」跑而不是一起跑：節流閘門是「每個 host 同時 2 條連線」，
+  // 而且任何一支被擋下時整個 host 會一起進冷卻（見 http.ts 的 markQuiet）。
+  // 九支一起發的話，關鍵請求得跟附帶請求擠同樣那兩條線，誰先惹到上游大家一起等；
+  // 證交所那邊同時有 5 支在排、櫃買 7 支。拆開之後關鍵那批只剩證交所 2 支、
+  // 櫃買 3 支，而且跑在任何一支附帶請求碰到上游之前。
   console.log('[1/5] 抓取來源資料…');
-  const [info, profiles, insiders, revenues, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
+
+  console.log('  關鍵來源（有時間窗，這一輪錯過就補不回來）…');
+  const [info, twseQ, twseV, tpexQ, tpexV, esbQ] = await Promise.all([
     fetchStockInfo(),
-    fetchCompanyProfiles(),
-    fetchInsiderHoldings(),
-    fetchMonthlyRevenue(),
     fetchTwseQuotes(),
     fetchTwseValuation(),
     fetchTpexQuotes(),
     fetchTpexValuation(),
     fetchEmergingQuotes(),
   ]);
+
+  // 附帶這批刻意一支一支跑，不用 Promise.all：它們沒有時間窗，多花幾十秒沒差，
+  // 但三支一起發就會把證交所那兩條連線塞滿，然後被回一頁 WAF 擋頁。
+  // 2026-11-04 本機乾跑重現過一次，中的就是檔案最大的那支「上市月營收」。
+  // 逐支跑之後上游幾乎不會再擋，也就不會老是看到「略過」。
+  console.log('  附帶來源（沒有時間窗，抓不到就下一輪再補）…');
+  const profiles = await optional('公司基本資料', fetchCompanyProfiles);
+  const insiders = await optional('內部人持股', fetchInsiderHoldings);
+  const revenues = await optional('月營收', fetchMonthlyRevenue);
+
   console.log(`  主檔(FinMind)                  ${info.length} 檔`);
   console.log(`  公司基本資料                   ${profiles.length} 筆`);
   console.log(`  上市 行情/評價                 ${twseQ.length} / ${twseV.length}`);
@@ -405,6 +457,12 @@ async function main() {
   // 回滾後再查一次，證明資料庫真的沒被動到
   const after = await prisma.$queryRawUnsafe<{ t: string; n: bigint }[]>(COUNT_SQL);
   console.log('交易外表列數：', after.map((r) => `${r.t}=${r.n}`).join('  '));
+  if (skipped.length) {
+    console.log(
+      `\n[注意] 這輪略過的附帶來源：${skipped.join('、')}` +
+        `（沒有時間窗，下一輪會再補；真正掉資料由缺日偵測負責報警）`,
+    );
+  }
   console.log(`\n耗時 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
